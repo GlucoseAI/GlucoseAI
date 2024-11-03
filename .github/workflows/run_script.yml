@@ -12,11 +12,11 @@ jobs:
     steps:
       # Stáhne repozitář s vaším skriptem
       - name: Checkout repository
-        uses: actions/checkout@v3  # Aktualizace na verzi v3
+        uses: actions/checkout@v3
 
       # Nastaví Python
       - name: Set up Python
-        uses: actions/setup-python@v4  # Aktualizace na verzi v4
+        uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
