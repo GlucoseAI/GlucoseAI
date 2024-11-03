@@ -6,6 +6,7 @@ import os
 # Supabase konfigurace
 SUPABASE_URL = "https://dgvvugwfejojijpbnstq.supabase.co/rest/v1/G_Entries?select=*"  # Vložte zde URL Supabase
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
+print("SUPABASE_API_KEY:", SUPABASE_API_KEY)  # Debug: Zkontroluje, zda je klíč načten
 TABLE_NAME = "G_Entries"  # Nahraďte názvem vaší tabulky
 
 # API URL pro získání dat
