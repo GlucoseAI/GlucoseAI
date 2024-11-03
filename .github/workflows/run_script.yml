@@ -3,7 +3,7 @@ name: Run Python Script Every 5 Minutes
 on:
   schedule:
     # Spouští skript každých 5 minut
-    - cron: '*/6 * * * *'
+    - cron: '*/8 * * * *'
   workflow_dispatch:  # Povolí manuální spuštění
 
 jobs:
