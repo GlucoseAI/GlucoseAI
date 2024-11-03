@@ -4,6 +4,7 @@ on:
   schedule:
     # Spouští skript každých 5 minut
     - cron: '*/5 * * * *'
+  workflow_dispatch:  # Povolí manuální spuštění
 
 jobs:
   run-script:
