@@ -1,0 +1,33 @@
+name: Run Python Script Every 5 Minutes
+
+on:
+  schedule:
+    # Spouští skript každých 5 minut
+    - cron: '*/5 * * * *'
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Stáhne repozitář s vaším skriptem
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      # Nastaví Python
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      # Nainstaluje požadované balíčky, pokud jsou potřeba
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests  # Ujistěte se, že máte `requests` nainstalované
+
+      # Spustí váš Python skript
+      - name: Run script
+        env:
+          SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
+        run: python script.py
