@@ -1,10 +1,11 @@
 import json
 import requests
 from datetime import datetime
+import os
 
 # Supabase konfigurace
 SUPABASE_URL = "https://dgvvugwfejojijpbnstq.supabase.co/rest/v1/G_Entries?select=*"  # Vložte zde URL Supabase
-SUPABASE_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRndnZ1Z3dmZWpvamlqcGJuc3RxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMDU0MTIyNiwiZXhwIjoyMDQ2MTE3MjI2fQ.BIgNjP_sP69xEcwYrjWxO_-2e2i-u-qmE5CXGk5I-2k"  # Vložte zde API klíč
+SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 TABLE_NAME = "G_Entries"  # Nahraďte názvem vaší tabulky
 
 # API URL pro získání dat
