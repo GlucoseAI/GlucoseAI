@@ -12,11 +12,11 @@ jobs:
     steps:
       # Stáhne repozitář s vaším skriptem
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3  # Aktualizace na verzi v3
 
       # Nastaví Python
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4  # Aktualizace na verzi v4
         with:
           python-version: '3.x'
 
@@ -24,10 +24,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests  # Ujistěte se, že máte `requests` nainstalované
+          pip install requests
 
       # Spustí váš Python skript
       - name: Run script
         env:
           SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
         run: python script.py
+
