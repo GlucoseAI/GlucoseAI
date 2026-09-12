@@ -1,34 +1,35 @@
-name: Run Python Script Every 5 Minutes
+name: Run Glucose AI Every 5 Minutes
 
 on:
   schedule:
-    # Spouští skript každých 5 minut
-    - cron: '*/8 * * * *'
-  workflow_dispatch:  # Povolí manuální spuštění
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
 
     steps:
-      # Stáhne repozitář s vaším skriptem
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # Nastaví Python
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.12'
+          cache: 'pip'
 
-      # Nainstaluje požadované balíčky, pokud jsou potřeba
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests pandas "timesfm[torch]"
 
-      # Spustí váš Python skript
-      - name: Run script
+      - name: Run Gluroo synchronization
         env:
           SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
         run: python script.py
+
+      - name: Run TimesFM forecast
+        env:
+          SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
+        run: python forecast.py
