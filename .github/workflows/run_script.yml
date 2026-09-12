@@ -2,7 +2,7 @@ name: Run Glucose AI Every 5 Minutes
 
 on:
   schedule:
-    - cron: '*/3 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
