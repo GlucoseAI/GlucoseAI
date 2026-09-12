@@ -1,374 +1,363 @@
 <!DOCTYPE html>
 <html lang="cs">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Glucose AI</title>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <style>
-        body {
-            margin: 0;
-            font-family: Arial, sans-serif;
-            background: #f5f7fa;
-            color: #222;
-        }
-
-        .container {
-            max-width: 1100px;
-            margin: 40px auto;
-            padding: 20px;
-        }
-
-        h1 {
-            margin-bottom: 5px;
-        }
-
-        .subtitle {
-            color: #666;
-            margin-bottom: 25px;
-        }
-
-        .cards {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 25px;
-        }
-
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            flex: 1;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-        }
-
-        .value {
-            font-size: 32px;
-            font-weight: bold;
-            margin-top: 8px;
-        }
-
-        .chart-container {
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-        }
-
-        #status {
-            margin-top: 15px;
-            color: #666;
-        }
-
-        @media (max-width: 700px) {
-            .cards {
-                flex-direction: column;
-            }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glucose AI</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f4f6f8;
+      color: #111827;
+    }
+    .container {
+      max-width: 1050px;
+      margin: 40px auto;
+      padding: 0 18px;
+    }
+    h1 { margin-bottom: 4px; }
+    .subtitle { color: #667085; margin-top: 0; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      margin: 24px 0;
+    }
+    .card {
+      background: white;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 3px 14px rgba(0,0,0,.08);
+    }
+    .label { color: #667085; font-size: 15px; }
+    .value {
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 8px;
+    }
+    .trend {
+      font-size: 32px;
+      margin-left: 8px;
+    }
+    .chart-card {
+      background: white;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 3px 14px rgba(0,0,0,.08);
+    }
+    .chart-wrap {
+      position: relative;
+      height: 520px;
+    }
+    #status {
+      margin-top: 12px;
+      color: #667085;
+    }
+    .legend-note {
+      margin: 12px 0 0;
+      color: #667085;
+      font-size: 13px;
+    }
+    @media (max-width: 850px) {
+      .cards { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 520px) {
+      .cards { grid-template-columns: 1fr; }
+      .container { margin-top: 20px; }
+      .chart-wrap { height: 420px; }
+    }
+  </style>
 </head>
-
 <body>
-
 <div class="container">
+  <h1>Glucose AI</h1>
+  <p class="subtitle">Predikce glukózy pomocí TimesFM 3.0</p>
 
-    <h1>Glucose AI</h1>
-
-    <div class="subtitle">
-        Predikce glukózy pomocí TimesFM 3.0
+  <div class="cards">
+    <div class="card">
+      <div class="label">Aktuální glukóza</div>
+      <div class="value" id="current">--</div>
     </div>
 
-    <div class="cards">
-
-        <div class="card">
-            <div>Aktuální glukóza</div>
-            <div class="value" id="currentGlucose">--</div>
-        </div>
-
-        <div class="card">
-            <div>Predikce za 60 minut</div>
-            <div class="value" id="forecastGlucose">--</div>
-        </div>
-
-        <div class="card">
-            <div>Poslední aktualizace</div>
-            <div class="value" style="font-size:20px" id="updated">--</div>
-        </div>
-
+    <div class="card">
+      <div class="label">Predikce za 60 minut</div>
+      <div class="value" id="forecast60">--</div>
     </div>
 
-    <div class="chart-container">
-        <canvas id="glucoseChart"></canvas>
+    <div class="card">
+      <div class="label">Trend</div>
+      <div class="value">
+        <span id="trendArrow">→</span>
+        <span id="trendText">--</span>
+      </div>
     </div>
 
-    <div id="status">
-        Načítám data...
+    <div class="card">
+      <div class="label">Poslední aktualizace</div>
+      <div class="value" id="updated" style="font-size:20px">--</div>
     </div>
+  </div>
 
+  <div class="chart-card">
+    <div class="chart-wrap">
+      <canvas id="glucoseChart"></canvas>
+    </div>
+    <p class="legend-note">
+      Graf zobrazuje posledních 24 hodin skutečných měření a 2 hodiny predikce.
+      Růžové pásmo je interval P10–P90 TimesFM.
+      Referenční pásma jsou pouze orientační a nejsou určena pro rozhodování o léčbě.
+    </p>
+  </div>
+
+  <div id="status">Načítám data…</div>
 </div>
 
-
 <script>
+const SUPABASE_URL = "https://tpzwxutiveixprniptyh.supabase.co";
 
-const SUPABASE_URL =
-    "https://tpzwxutiveixprniptyh.supabase.co";
+// Použij pouze Supabase PUBLISHABLE key, nikdy Secret key.
+const SUPABASE_KEY = "SEM_VLOZ_SUPABASE_PUBLISHABLE_KEY";
 
-/*
-    SEM POZDĚJI VLOŽÍME SUPABASE PUBLISHABLE KEY.
+let chart = null;
 
-    NIKDY SEM NEDÁVEJ SUPABASE SECRET KEY.
-*/
-const SUPABASE_KEY =
-    "sb_publishable_EJsUJovb-CBE2TQs25Dvpg_iVBuhMal";
-
-
-async function loadData() {
-
-    try {
-
-        // ------------------------------------------------
-        // Načtení posledních měření glukózy
-        // ------------------------------------------------
-
-        const glucoseResponse = await fetch(
-            SUPABASE_URL +
-            "/rest/v1/G_Entries" +
-            "?select=dateString,sgv_mmol" +
-            "&order=dateString.desc" +
-            "&limit=72",
-            {
-                headers: {
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": "Bearer " + SUPABASE_KEY
-                }
-            }
-        );
-
-        const glucoseData =
-            await glucoseResponse.json();
-
-
-        // ------------------------------------------------
-        // Načtení poslední predikce
-        // ------------------------------------------------
-
-        const forecastResponse = await fetch(
-            SUPABASE_URL +
-            "/rest/v1/glucose_forecasts" +
-            "?select=forecast_time,predicted_mmol" +
-            "&order=forecast_time.asc" +
-            "&limit=12",
-            {
-                headers: {
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": "Bearer " + SUPABASE_KEY
-                }
-            }
-        );
-
-        const forecastData =
-            await forecastResponse.json();
-
-
-        // ------------------------------------------------
-        // Aktuální hodnota
-        // ------------------------------------------------
-
-        if (glucoseData.length > 0) {
-
-            const current =
-                parseFloat(glucoseData[0].sgv_mmol);
-
-            document.getElementById(
-                "currentGlucose"
-            ).textContent =
-                current.toFixed(2) + " mmol/l";
-        }
-
-
-        // ------------------------------------------------
-        // Poslední predikce
-        // ------------------------------------------------
-
-        if (forecastData.length > 0) {
-
-            const lastForecast =
-                forecastData[forecastData.length - 1];
-
-            document.getElementById(
-                "forecastGlucose"
-            ).textContent =
-                parseFloat(
-                    lastForecast.predicted_mmol
-                ).toFixed(2) + " mmol/l";
-
-            document.getElementById(
-                "updated"
-            ).textContent =
-                new Date(
-                    lastForecast.forecast_time
-                ).toLocaleTimeString(
-                    "cs-CZ",
-                    {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                    }
-                );
-        }
-
-
-        // ------------------------------------------------
-        // Data pro graf
-        // ------------------------------------------------
-
-        const glucose =
-            glucoseData.reverse();
-
-        const labels = [];
-        const actualValues = [];
-
-        glucose.forEach(item => {
-
-            labels.push(
-                new Date(
-                    item.dateString
-                ).toLocaleTimeString(
-                    "cs-CZ",
-                    {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                    }
-                )
-            );
-
-            actualValues.push(
-                parseFloat(item.sgv_mmol)
-            );
-        });
-
-
-        const forecastValues =
-            new Array(actualValues.length - 1)
-                .fill(null);
-
-        forecastData.forEach(item => {
-
-            labels.push(
-                new Date(
-                    item.forecast_time
-                ).toLocaleTimeString(
-                    "cs-CZ",
-                    {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                    }
-                )
-            );
-
-            forecastValues.push(
-                parseFloat(
-                    item.predicted_mmol
-                )
-            );
-        });
-
-
-        // ------------------------------------------------
-        // Graf
-        // ------------------------------------------------
-
-        new Chart(
-            document.getElementById("glucoseChart"),
-            {
-                type: "line",
-
-                data: {
-                    labels: labels,
-
-                    datasets: [
-
-                        {
-                            label: "Skutečná glukóza",
-                            data: actualValues,
-                            tension: 0.3,
-                            spanGaps: true
-                        },
-
-                        {
-                            label: "TimesFM predikce",
-                            data: forecastValues,
-                            tension: 0.3,
-                            borderDash: [6, 6],
-                            spanGaps: true
-                        }
-
-                    ]
-                },
-
-                options: {
-
-                    responsive: true,
-
-                    interaction: {
-                        mode: "index",
-                        intersect: false
-                    },
-
-                    scales: {
-
-                        y: {
-                            title: {
-                                display: true,
-                                text: "Glukóza (mmol/l)"
-                            }
-                        },
-
-                        x: {
-                            title: {
-                                display: true,
-                                text: "Čas"
-                            }
-                        }
-
-                    }
-
-                }
-            }
-        );
-
-
-        document.getElementById(
-            "status"
-        ).textContent =
-            "Data načtena úspěšně.";
-
-    }
-
-    catch (error) {
-
-        console.error(error);
-
-        document.getElementById(
-            "status"
-        ).textContent =
-            "Chyba při načítání dat.";
-    }
+function supabaseHeaders() {
+  return {
+    "apikey": SUPABASE_KEY,
+    "Authorization": `Bearer ${SUPABASE_KEY}`
+  };
 }
 
+function fmtTime(ts) {
+  return new Date(ts).toLocaleTimeString("cs-CZ", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function trendInfo(values) {
+  if (values.length < 4) return { arrow: "→", text: "stabilní" };
+
+  const a = values[values.length - 4];
+  const b = values[values.length - 1];
+  const delta = b - a;
+
+  if (delta > 0.25) return { arrow: "↑", text: "stoupá" };
+  if (delta < -0.25) return { arrow: "↓", text: "klesá" };
+  return { arrow: "→", text: "stabilní" };
+}
+
+// Light horizontal reference bands. They are visual reference only.
+const referenceBands = {
+  id: "referenceBands",
+  beforeDraw(chart) {
+    const {ctx, chartArea, scales} = chart;
+    if (!chartArea || !scales.y) return;
+
+    const y = scales.y;
+    const bands = [
+      {from: y.min, to: Math.min(3.9, y.max)},
+      {from: Math.max(3.9, y.min), to: Math.min(10.0, y.max)},
+      {from: Math.max(10.0, y.min), to: y.max}
+    ];
+
+    ctx.save();
+    bands.forEach((band, i) => {
+      if (band.to <= band.from) return;
+      const top = y.getPixelForValue(band.to);
+      const bottom = y.getPixelForValue(band.from);
+
+      ctx.fillStyle = i === 0
+        ? "rgba(239, 68, 68, 0.08)"
+        : i === 1
+          ? "rgba(34, 197, 94, 0.05)"
+          : "rgba(245, 158, 11, 0.08)";
+
+      ctx.fillRect(chartArea.left, top, chartArea.right - chartArea.left, bottom - top);
+    });
+    ctx.restore();
+  }
+};
+
+async function loadData() {
+  try {
+    if (SUPABASE_KEY === "SEM_VLOZ_SUPABASE_PUBLISHABLE_KEY") {
+      throw new Error("Do index.html je potřeba vložit Supabase publishable key.");
+    }
+
+    const glucoseUrl =
+      `${SUPABASE_URL}/rest/v1/G_Entries` +
+      `?select=dateString,sgv_mmol&order=dateString.desc&limit=5000`;
+
+    const forecastUrl =
+      `${SUPABASE_URL}/rest/v1/glucose_forecasts` +
+      `?select=forecast_time,predicted_mmol,p10_mmol,p90_mmol` +
+      `&order=forecast_time.asc&limit=24`;
+
+    const [gRes, fRes] = await Promise.all([
+      fetch(glucoseUrl, {headers: supabaseHeaders()}),
+      fetch(forecastUrl, {headers: supabaseHeaders()})
+    ]);
+
+    if (!gRes.ok) throw new Error(`G_Entries HTTP ${gRes.status}`);
+    if (!fRes.ok) throw new Error(`glucose_forecasts HTTP ${fRes.status}`);
+
+    const glucose = await gRes.json();
+    const forecast = await fRes.json();
+
+    if (!glucose.length) throw new Error("Žádná glucose data.");
+    if (!forecast.length) throw new Error("Žádná forecast data.");
+
+    glucose.sort((a,b) => new Date(a.dateString) - new Date(b.dateString));
+
+    // Show last 24h from the current data stream.
+    const latest = new Date(glucose[glucose.length - 1].dateString);
+    const cutoff = new Date(latest.getTime() - 24 * 60 * 60 * 1000);
+    const recent = glucose.filter(x => new Date(x.dateString) >= cutoff);
+
+    const actualLabels = recent.map(x => fmtTime(x.dateString));
+    const actualValues = recent.map(x => Number(x.sgv_mmol));
+
+    const forecastLabels = forecast.map(x => fmtTime(x.forecast_time));
+    const forecastValues = forecast.map(x => Number(x.predicted_mmol));
+    const p10Values = forecast.map(x => Number(x.p10_mmol));
+    const p90Values = forecast.map(x => Number(x.p90_mmol));
+
+    document.getElementById("current").textContent =
+      `${actualValues[actualValues.length - 1].toFixed(2)} mmol/l`;
+
+    const index60 = Math.min(11, forecastValues.length - 1);
+    document.getElementById("forecast60").textContent =
+      `${forecastValues[index60].toFixed(2)} mmol/l`;
+
+    const t = trendInfo(actualValues);
+    document.getElementById("trendArrow").textContent = t.arrow;
+    document.getElementById("trendText").textContent = t.text;
+
+    document.getElementById("updated").textContent =
+      fmtTime(latest);
+
+    const labels = [...actualLabels, ...forecastLabels];
+
+    // Bridge point so the forecast starts exactly where the actual series ends.
+    const bridge = actualValues[actualValues.length - 1];
+    const actualData = [
+      ...actualValues,
+      ...Array(forecastValues.length).fill(null)
+    ];
+    const medianData = [
+      ...Array(actualValues.length - 1).fill(null),
+      bridge,
+      ...forecastValues
+    ];
+    const p10Data = [
+      ...Array(actualValues.length - 1).fill(null),
+      bridge,
+      ...p10Values
+    ];
+    const p90Data = [
+      ...Array(actualValues.length - 1).fill(null),
+      bridge,
+      ...p90Values
+    ];
+
+    if (chart) chart.destroy();
+
+    chart = new Chart(document.getElementById("glucoseChart"), {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Skutečná glukóza",
+            data: actualData,
+            borderWidth: 2,
+            pointRadius: 1.5,
+            tension: 0.15,
+            spanGaps: true
+          },
+          {
+            label: "TimesFM predikce",
+            data: medianData,
+            borderWidth: 2,
+            borderDash: [6, 4],
+            pointRadius: 2,
+            tension: 0.15
+          },
+          {
+            label: "P90",
+            data: p90Data,
+            borderWidth: 0,
+            pointRadius: 0,
+            fill: "+1"
+          },
+          {
+            label: "P10",
+            data: p10Data,
+            borderWidth: 0,
+            pointRadius: 0,
+            fill: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: "index",
+          intersect: false
+        },
+        scales: {
+          y: {
+            title: {
+              display: true,
+              text: "Glukóza (mmol/l)"
+            },
+            suggestedMin: 3,
+            suggestedMax: 12
+          },
+          x: {
+            title: {
+              display: true,
+              text: "Čas"
+            },
+            ticks: {
+              maxTicksLimit: 24
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: {
+              filter: item => item.datasetIndex < 2
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label(context) {
+                const value = context.parsed.y;
+                if (value == null) return "";
+                return `${context.dataset.label}: ${value.toFixed(2)} mmol/l`;
+              }
+            }
+          }
+        }
+      },
+      plugins: [referenceBands]
+    });
+
+    document.getElementById("status").textContent =
+      "Data načtena úspěšně.";
+  } catch (err) {
+    console.error(err);
+    document.getElementById("status").textContent =
+      "Chyba při načítání dat: " + err.message;
+  }
+}
 
 loadData();
-
-
-// Obnovení stránky každých 5 minut
-setInterval(
-    () => location.reload(),
-    5 * 60 * 1000
-);
-
+setInterval(loadData, 5 * 60 * 1000);
 </script>
-
 </body>
 </html>
