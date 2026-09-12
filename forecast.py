@@ -12,17 +12,11 @@ from timesfm3 import TimesFM3Evaluator, ModelConfig
 
 SUPABASE_URL = "https://tpzwxutiveixprniptyh.supabase.co"
 TABLE_NAME = "G_Entries"
+FORECAST_TABLE = "glucose_forecasts"
 
-# Kolik aktuální historie maximálně načteme
 LOOKBACK_HOURS = 12
-
-# Požadovaný interval
 INTERVAL = "5min"
-
-# Kolik bodů chceme použít pro predikci
 MAX_INPUT_POINTS = 72
-
-# Kolik bodů chceme předpovědět
 FORECAST_POINTS = 12
 
 
@@ -34,7 +28,6 @@ API_KEY = os.getenv("SUPABASE_API_KEY")
 
 if not API_KEY:
     raise RuntimeError("SUPABASE_API_KEY není nastavena.")
-
 
 headers = {
     "apikey": API_KEY,
@@ -99,9 +92,7 @@ df = df.set_index("dateString")
 
 series = df["sgv_mmol"].resample(INTERVAL).mean()
 
-# Doplnění případných mezer interpolací
 series = series.interpolate(method="time")
-
 series = series.dropna()
 
 
@@ -124,12 +115,14 @@ print()
 print("========================================")
 print("VSTUP PRO TIMESFM")
 print("========================================")
+
 print(f"Počet hodnot: {len(values)}")
 print(f"Od: {input_series.index[0]}")
 print(f"Do: {input_series.index[-1]}")
 
 print()
 print("Poslední hodnoty:")
+
 for timestamp, value in input_series.tail(10).items():
     print(f"{timestamp}  {value:.2f} mmol/l")
 
@@ -149,7 +142,6 @@ config = ModelConfig(
 
 forecaster = TimesFM3Evaluator(config)
 
-
 print("Provádím predikci...")
 
 outputs = list(
@@ -161,12 +153,11 @@ outputs = list(
     )
 )
 
-
 forecast = np.asarray(outputs[0].forecast).reshape(-1)
 
 
 # ============================================================
-# VÝSLEDEK
+# ČASY PREDIKCE
 # ============================================================
 
 last_timestamp = input_series.index[-1]
@@ -178,6 +169,10 @@ forecast_times = pd.date_range(
 )
 
 
+# ============================================================
+# VÝPIS PREDIKCE
+# ============================================================
+
 print()
 print("========================================")
 print("TIMESFM 3.0 – PREDIKCE")
@@ -187,10 +182,56 @@ for timestamp, value in zip(forecast_times, forecast):
     print(f"{timestamp}  ->  {value:.2f} mmol/l")
 
 
+# ============================================================
+# ULOŽENÍ PREDIKCE DO SUPABASE
+# ============================================================
+
+print()
+print("Ukládám predikci do Supabase...")
+
+forecast_url = (
+    f"{SUPABASE_URL}/rest/v1/{FORECAST_TABLE}"
+)
+
+forecast_data = [
+    {
+        "forecast_time": timestamp.isoformat(),
+        "predicted_mmol": float(value),
+    }
+    for timestamp, value in zip(forecast_times, forecast)
+]
+
+insert_headers = {
+    **headers,
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal",
+}
+
+insert_response = requests.post(
+    forecast_url,
+    headers=insert_headers,
+    json=forecast_data,
+)
+
+if insert_response.status_code not in (200, 201):
+    raise RuntimeError(
+        f"Chyba při ukládání predikce: "
+        f"{insert_response.status_code} "
+        f"{insert_response.text}"
+    )
+
+print(f"Úspěšně uloženo {len(forecast_data)} predikovaných hodnot.")
+
+
+# ============================================================
+# HOTOVO
+# ============================================================
+
 print()
 print("========================================")
 print("HOTOVO")
 print("========================================")
+
 print(f"Vstup:     {len(values)} hodnot")
 print(f"Predikce:  {len(forecast)} hodnot")
 print(f"Horizont:  {len(forecast) * 5} minut")
