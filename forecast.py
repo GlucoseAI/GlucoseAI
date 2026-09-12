@@ -1,237 +1,193 @@
 import os
-import requests
+from datetime import timedelta
+
 import numpy as np
 import pandas as pd
-
+import requests
 from timesfm3 import TimesFM3Evaluator, ModelConfig
-
-
-# ============================================================
-# KONFIGURACE
-# ============================================================
 
 SUPABASE_URL = "https://tpzwxutiveixprniptyh.supabase.co"
 TABLE_NAME = "G_Entries"
 FORECAST_TABLE = "glucose_forecasts"
 
-LOOKBACK_HOURS = 12
+# Use a much longer context: 24 hours at 5-minute resolution.
+LOOKBACK_HOURS = 24
 INTERVAL = "5min"
-MAX_INPUT_POINTS = 72
-FORECAST_POINTS = 12
+INPUT_POINTS = 288          # 24 h / 5 min
+FORECAST_POINTS = 24        # 2 h / 5 min
 
 
-# ============================================================
-# SUPABASE
-# ============================================================
-
-API_KEY = os.getenv("SUPABASE_API_KEY")
-
-if not API_KEY:
-    raise RuntimeError("SUPABASE_API_KEY není nastavena.")
-
-headers = {
-    "apikey": API_KEY,
-    "Authorization": f"Bearer {API_KEY}",
-}
-
-
-# ============================================================
-# NAČTENÍ DAT
-# ============================================================
-
-print("Načítám aktuální data ze Supabase...")
-
-url = (
-    f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
-    "?select=dateString,sgv_mmol"
-    "&order=dateString.desc"
-    "&limit=5000"
-)
-
-response = requests.get(url, headers=headers)
-
-if response.status_code != 200:
-    raise RuntimeError(
-        f"Supabase chyba {response.status_code}: {response.text}"
-    )
-
-data = response.json()
-
-if not data:
-    raise RuntimeError("Supabase nevrátil žádná data.")
-
-
-df = pd.DataFrame(data)
-
-df["dateString"] = pd.to_datetime(df["dateString"], utc=True)
-df["sgv_mmol"] = pd.to_numeric(df["sgv_mmol"], errors="coerce")
-
-df = df.dropna(subset=["dateString", "sgv_mmol"])
-df = df.sort_values("dateString")
-
-
-# ============================================================
-# POUZE AKTUÁLNÍ DATA
-# ============================================================
-
-latest_time = df["dateString"].max()
-cutoff_time = latest_time - pd.Timedelta(hours=LOOKBACK_HOURS)
-
-df = df[df["dateString"] >= cutoff_time].copy()
-
-print()
-print(f"Nejnovější měření: {latest_time}")
-print(f"Počet aktuálních měření: {len(df)}")
-
-
-# ============================================================
-# PŘEVOD NA 5MINUTOVÝ INTERVAL
-# ============================================================
-
-df = df.set_index("dateString")
-
-series = df["sgv_mmol"].resample(INTERVAL).mean()
-
-series = series.interpolate(method="time")
-series = series.dropna()
-
-
-print(f"Počet 5minutových bodů: {len(series)}")
-
-
-if len(series) < 2:
-    raise RuntimeError(
-        "Máme příliš málo aktuálních dat pro test TimesFM."
-    )
-
-
-# Použijeme maximálně posledních 72 bodů
-input_series = series.tail(MAX_INPUT_POINTS)
-
-values = input_series.to_numpy(dtype=np.float32)
-
-
-print()
-print("========================================")
-print("VSTUP PRO TIMESFM")
-print("========================================")
-
-print(f"Počet hodnot: {len(values)}")
-print(f"Od: {input_series.index[0]}")
-print(f"Do: {input_series.index[-1]}")
-
-print()
-print("Poslední hodnoty:")
-
-for timestamp, value in input_series.tail(10).items():
-    print(f"{timestamp}  {value:.2f} mmol/l")
-
-
-# ============================================================
-# TIMESFM 3.0
-# ============================================================
-
-print()
-print("Načítám TimesFM 3.0...")
-
-config = ModelConfig(
-    checkpoint_path="google/timesfm-3.0-pytorch",
-    per_core_batch_size=1,
-    device="cpu",
-)
-
-forecaster = TimesFM3Evaluator(config)
-
-print("Provádím predikci...")
-
-outputs = list(
-    forecaster.predict_batch(
-        [values],
-        horizon=FORECAST_POINTS,
-        return_quantiles=True,
-        use_symmetric_averaging=False,
-    )
-)
-
-forecast = np.asarray(outputs[0].forecast).reshape(-1)
-
-
-# ============================================================
-# ČASY PREDIKCE
-# ============================================================
-
-last_timestamp = input_series.index[-1]
-
-forecast_times = pd.date_range(
-    start=last_timestamp + pd.Timedelta(minutes=5),
-    periods=FORECAST_POINTS,
-    freq=INTERVAL,
-)
-
-
-# ============================================================
-# VÝPIS PREDIKCE
-# ============================================================
-
-print()
-print("========================================")
-print("TIMESFM 3.0 – PREDIKCE")
-print("========================================")
-
-for timestamp, value in zip(forecast_times, forecast):
-    print(f"{timestamp}  ->  {value:.2f} mmol/l")
-
-
-# ============================================================
-# ULOŽENÍ PREDIKCE DO SUPABASE
-# ============================================================
-
-print()
-print("Ukládám predikci do Supabase...")
-
-forecast_url = (
-    f"{SUPABASE_URL}/rest/v1/{FORECAST_TABLE}"
-)
-
-forecast_data = [
-    {
-        "forecast_time": timestamp.isoformat(),
-        "predicted_mmol": float(value),
+def get_headers():
+    key = os.environ.get("SUPABASE_API_KEY")
+    if not key:
+        raise RuntimeError("SUPABASE_API_KEY is not set")
+    return {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
     }
-    for timestamp, value in zip(forecast_times, forecast)
-]
 
-insert_headers = {
-    **headers,
-    "Content-Type": "application/json",
-    "Prefer": "return=minimal",
-}
 
-insert_response = requests.post(
-    forecast_url,
-    headers=insert_headers,
-    json=forecast_data,
-)
+def fetch_glucose():
+    url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
+    params = {
+        "select": "dateString,sgv_mmol",
+        "order": "dateString.desc",
+        "limit": "10000",
+    }
+    r = requests.get(url, headers=get_headers(), params=params, timeout=30)
+    r.raise_for_status()
 
-if insert_response.status_code not in (200, 201):
-    raise RuntimeError(
-        f"Chyba při ukládání predikce: "
-        f"{insert_response.status_code} "
-        f"{insert_response.text}"
+    rows = r.json()
+    if not rows:
+        raise RuntimeError("No glucose data returned from Supabase")
+
+    df = pd.DataFrame(rows)
+    df["dateString"] = pd.to_datetime(df["dateString"], utc=True)
+    df["sgv_mmol"] = pd.to_numeric(df["sgv_mmol"], errors="coerce")
+    df = df.dropna(subset=["dateString", "sgv_mmol"])
+    df = df.sort_values("dateString").drop_duplicates("dateString")
+    return df
+
+
+def prepare_input(df):
+    latest = df["dateString"].max()
+    start = latest - pd.Timedelta(hours=LOOKBACK_HOURS)
+
+    df = df[df["dateString"] >= start].copy()
+    if df.empty:
+        raise RuntimeError("No glucose data in the requested lookback window")
+
+    # Put irregular CGM measurements onto a regular 5-minute grid.
+    series = (
+        df.set_index("dateString")["sgv_mmol"]
+        .resample(INTERVAL)
+        .mean()
+        .interpolate(method="time")
+        .ffill()
+        .bfill()
     )
 
-print(f"Úspěšně uloženo {len(forecast_data)} predikovaných hodnot.")
+    if len(series) < INPUT_POINTS:
+        print(
+            f"Only {len(series)} regular 5-minute points are available. "
+            f"TimesFM will use all available points until 24 h is collected."
+        )
+        values = series.to_numpy(dtype=np.float32)
+    else:
+        values = series.iloc[-INPUT_POINTS:].to_numpy(dtype=np.float32)
+
+    if len(values) < 8:
+        raise RuntimeError(
+            f"Not enough current contiguous data for forecasting: {len(values)} points"
+        )
+
+    last_grid_time = series.index[-1]
+    return values, last_grid_time, len(series)
 
 
-# ============================================================
-# HOTOVO
-# ============================================================
+def run_timesfm(values):
+    config = ModelConfig(
+        checkpoint_path="google/timesfm-3.0-pytorch",
+        per_core_batch_size=1,
+        device="cpu",
+    )
+    forecaster = TimesFM3Evaluator(config)
 
-print()
-print("========================================")
-print("HOTOVO")
-print("========================================")
+    outputs = list(
+        forecaster.predict_batch(
+            [values],
+            horizon=FORECAST_POINTS,
+            return_quantiles=True,
+            use_symmetric_averaging=False,
+        )
+    )
+    out = outputs[0]
 
-print(f"Vstup:     {len(values)} hodnot")
-print(f"Predikce:  {len(forecast)} hodnot")
-print(f"Horizont:  {len(forecast) * 5} minut")
+    forecast = np.asarray(out.forecast).reshape(-1)
+    quantiles = np.asarray(out.quantiles)
+
+    # TimesFM 3.0 returns 9 quantiles: 0.1 ... 0.9.
+    # For a univariate series, shape is (horizon, 9).
+    if quantiles.ndim == 3:
+        quantiles = quantiles[0]
+
+    p10 = quantiles[:, 0]
+    p90 = quantiles[:, 8]
+
+    return forecast, p10, p90
+
+
+def save_forecast(last_grid_time, forecast, p10, p90):
+    headers = get_headers()
+
+    # Keep only the newest forecast run in the public table.
+    delete_url = f"{SUPABASE_URL}/rest/v1/{FORECAST_TABLE}"
+    delete_headers = dict(headers)
+    delete_headers["Prefer"] = "return=minimal"
+
+    # id=gt.0 matches every normal identity row and avoids depending on a
+    # particular primary-key value.
+    r = requests.delete(
+        delete_url,
+        headers=delete_headers,
+        params={"id": "gt.0"},
+        timeout=30,
+    )
+    r.raise_for_status()
+
+    rows = []
+    for i, (pred, lo, hi) in enumerate(zip(forecast, p10, p90), start=1):
+        ts = last_grid_time + timedelta(minutes=5 * i)
+        rows.append(
+            {
+                "forecast_time": ts.isoformat(),
+                "predicted_mmol": float(pred),
+                "p10_mmol": float(lo),
+                "p90_mmol": float(hi),
+            }
+        )
+
+    post_url = f"{SUPABASE_URL}/rest/v1/{FORECAST_TABLE}"
+    post_headers = dict(headers)
+    post_headers["Prefer"] = "return=minimal"
+
+    r = requests.post(
+        post_url,
+        headers=post_headers,
+        json=rows,
+        timeout=30,
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Forecast insert failed: HTTP {r.status_code} - {r.text}"
+        )
+
+    return len(rows)
+
+
+def main():
+    df = fetch_glucose()
+    values, last_grid_time, regular_points = prepare_input(df)
+
+    print(f"Latest source measurement: {df['dateString'].max().isoformat()}")
+    print(f"Regular 5-minute points available: {regular_points}")
+    print(f"TimesFM context points used: {len(values)}")
+    print(f"Forecast horizon: {FORECAST_POINTS} points / 2 hours")
+
+    forecast, p10, p90 = run_timesfm(values)
+
+    saved = save_forecast(last_grid_time, forecast, p10, p90)
+
+    print("FORECAST OK")
+    for i, (pred, lo, hi) in enumerate(zip(forecast, p10, p90), start=1):
+        ts = last_grid_time + timedelta(minutes=5 * i)
+        print(
+            f"{ts.isoformat()} | median={pred:.3f} | "
+            f"P10={lo:.3f} | P90={hi:.3f}"
+        )
+    print(f"Saved {saved} forecast rows to Supabase.")
+
+
+if __name__ == "__main__":
+    main()
