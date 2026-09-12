@@ -63,7 +63,7 @@ def save_new_entries(entries):
 # Funkce pro načtení dat z API
 def fetch_data_from_api(latest_timestamp):
     # Dynamicky doplníme hodnotu `latest_timestamp` do URL API
-    url = f"https://2098.ns.gluroo.com/api/v1/entries.json?token=2098657e-e58a-432d-89af-f4f59f8bb44b&find[date][$gt]={latest_timestamp}&count=10000000"
+    url = f"https://2098.ns.gluroo.com/api/v1/entries.json?token=2098657e-e58a-432d-89af-f4f59f8bb44b&find[date][$gt]={latest_timestamp}&count=1000"
 
     response = requests.get(url)
     if response.status_code == 200:
