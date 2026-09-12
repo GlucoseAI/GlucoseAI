@@ -4,13 +4,13 @@ from datetime import datetime
 import os
 
 # Supabase konfigurace
-SUPABASE_URL = "https://dgvvugwfejojijpbnstq.supabase.co/rest/v1/G_Entries?select=*"  # Vložte zde URL Supabase
+SUPABASE_URL = "https://tpzwxutiveixprniptyh.supabase.co"  # Nová URL Supabase
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 print("SUPABASE_API_KEY:", SUPABASE_API_KEY)  # Debug: Zkontroluje, zda je klíč načten
-TABLE_NAME = "G_Entries"  # Nahraďte názvem vaší tabulky
+TABLE_NAME = "G_Entries"  # Název tabulky
 
 # API URL pro získání dat
-#API_URL = "https://2098.ns.gluroo.com/api/v1/entries.json?token=2098657e-e58a-432d-89af-f4f59f8bb44b&find[date][$gt]=1730637775000&count=10000000"  # Nahraďte URL vašeho API endpointu
+#API_URL = "https://2098.ns.gluroo.com/api/v1/entries.json?token=2098657e-e58a-432d-89af-f4f59f8bb44b&find[date][$gt]=1730637775000&count=10000000"
 
 # Hlavičky pro Supabase s autorizací
 headers = {
@@ -23,7 +23,7 @@ headers = {
 def get_latest_entry():
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}?select=_id,date&order=date.desc&limit=1"
     response = requests.get(url, headers=headers)
-    
+
     if response.status_code == 200 and response.json():
         return response.json()[0]  # Vrací nejnovější záznam
     else:
@@ -33,12 +33,12 @@ def get_latest_entry():
 # Funkce pro uložení nových hodnot do Supabase
 def save_new_entries(entries):
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
-    
+
     for entry in entries:
         # Vypočítat sgv_mmol jako sgv / 18, pokud sgv existuje
         sgv_value = entry.get("sgv")
         sgv_mmol = round(sgv_value / 18, 2) if sgv_value is not None else None
-        
+
         # Připravit JSON pro nový záznam včetně sgv_mmol
         data = {
             "_id": entry.get("_id"),
@@ -51,10 +51,10 @@ def save_new_entries(entries):
             "utcOffset": entry.get("utcOffset"),
             "sysTime": entry.get("sysTime")
         }
-        
+
         # Poslat POST požadavek do Supabase
         response = requests.post(url, headers=headers, json=data)
-        
+
         if response.status_code != 201:
             print(f"Chyba při ukládání záznamu {entry.get('_id')}: {response.status_code}, {response.text}")
         else:
@@ -64,7 +64,7 @@ def save_new_entries(entries):
 def fetch_data_from_api(latest_timestamp):
     # Dynamicky doplníme hodnotu `latest_timestamp` do URL API
     url = f"https://2098.ns.gluroo.com/api/v1/entries.json?token=2098657e-e58a-432d-89af-f4f59f8bb44b&find[date][$gt]={latest_timestamp}&count=10000000"
-    
+
     response = requests.get(url)
     if response.status_code == 200:
         return response.json()  # Předpokládáme, že API vrací data ve formátu JSON
@@ -75,12 +75,12 @@ def fetch_data_from_api(latest_timestamp):
 # Funkce pro filtrování a zpracování nových dat
 def process_data(data, latest_timestamp, existing_ids):
     # Filtrování nových záznamů podle nejnovějšího času a kontrola duplicit podle `_id`
-    new_entries = [entry for entry in data 
+    new_entries = [entry for entry in data
                    if entry.get('_id') not in existing_ids and entry.get('date', 0) > latest_timestamp]
-    
+
     # Seřazení nových záznamů od nejnovějších k nejstarším
     new_entries.sort(key=lambda x: x.get('date', 0), reverse=True)
-    
+
     if new_entries:
         save_new_entries(new_entries)
         print(f"{len(new_entries)} nové hodnoty byly uloženy.")
