@@ -118,7 +118,7 @@
 const SUPABASE_URL = "https://tpzwxutiveixprniptyh.supabase.co";
 
 // Použij pouze Supabase PUBLISHABLE key, nikdy Secret key.
-const SUPABASE_KEY = "SEM_VLOZ_SUPABASE_PUBLISHABLE_KEY";
+const SUPABASE_KEY = "sb_publishable_EJsUJovb-CBE2TQs25Dvpg_iVBuhMal";
 
 let chart = null;
 
@@ -182,7 +182,7 @@ const referenceBands = {
 
 async function loadData() {
   try {
-    if (SUPABASE_KEY === "SEM_VLOZ_SUPABASE_PUBLISHABLE_KEY") {
+    if (SUPABASE_KEY === "sb_publishable_EJsUJovb-CBE2TQs25Dvpg_iVBuhMal") {
       throw new Error("Do index.html je potřeba vložit Supabase publishable key.");
     }
 
