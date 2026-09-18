@@ -7,17 +7,8 @@ import numpy as np
 SUPABASE_URL = "https://tpzwxutiveixprniptyh.supabase.co"
 
 GLUCOSE_TABLE = "G_Entries"
-
 EVALUATION_TABLE = "glucose_forecast_evaluations"
 
-
-# =========================================================
-# SETTINGS
-# =========================================================
-
-# How close an actual CGM measurement must be to the
-# forecast creation time when reconstructing the state
-# that was known at prediction time.
 MATCH_TOLERANCE_MINUTES = 3
 
 
@@ -30,9 +21,8 @@ def get_headers():
     key = os.environ.get("SUPABASE_API_KEY")
 
     if not key:
-
         raise RuntimeError(
-            "SUPABASE_API_KEY is not set"
+            "SUPABASE_API_KEY is not set."
         )
 
     return {
@@ -54,7 +44,6 @@ def load_evaluations():
     )
 
     params = {
-
         "select": (
             "id,"
             "forecast_created_at,"
@@ -65,119 +54,61 @@ def load_evaluations():
             "error_mmol,"
             "absolute_error_mmol"
         ),
-
-        # We only want forecasts for which we already
-        # know the actual glucose value.
-
-        "actual_mmol":
-            "not.is.null",
-
-        "order":
-            "forecast_created_at.asc",
-
-        "limit":
-            "10000",
-
+        "actual_mmol": "not.is.null",
+        "order": "forecast_created_at.asc",
+        "limit": "10000",
     }
 
-
     response = requests.get(
-
         url,
-
         headers=get_headers(),
-
         params=params,
-
         timeout=30,
-
     )
-
 
     response.raise_for_status()
 
-
     rows = response.json()
 
-
     if not rows:
-
         return pd.DataFrame()
-
 
     df = pd.DataFrame(rows)
 
-
-    # -----------------------------------------------------
-    # Datetime conversion
-    # -----------------------------------------------------
-
     df["forecast_created_at"] = pd.to_datetime(
-
         df["forecast_created_at"],
-
         utc=True
-
     )
-
 
     df["forecast_time"] = pd.to_datetime(
-
         df["forecast_time"],
-
         utc=True
-
     )
 
-
-    # -----------------------------------------------------
-    # Numeric conversion
-    # -----------------------------------------------------
-
     numeric_columns = [
-
         "horizon_minutes",
-
         "predicted_mmol",
-
         "actual_mmol",
-
         "error_mmol",
-
         "absolute_error_mmol",
-
     ]
-
 
     for column in numeric_columns:
 
         df[column] = pd.to_numeric(
-
             df[column],
-
             errors="coerce"
-
         )
 
-
     df = df.dropna(
-
         subset=[
-
             "forecast_created_at",
-
             "forecast_time",
-
             "horizon_minutes",
-
             "predicted_mmol",
-
             "actual_mmol",
-
         ]
-
     )
-
 
     return df
 
@@ -193,255 +124,154 @@ def load_glucose():
         f"{GLUCOSE_TABLE}"
     )
 
-
     params = {
-
-        "select":
-            "dateString,sgv_mmol",
-
-        # IMPORTANT:
-        # newest data first
-
-        "order":
-            "dateString.desc",
-
-        "limit":
-            "10000",
-
+        "select": "dateString,sgv_mmol",
+        "order": "dateString.desc",
+        "limit": "10000",
     }
 
-
     response = requests.get(
-
         url,
-
         headers=get_headers(),
-
         params=params,
-
         timeout=30,
-
     )
-
 
     response.raise_for_status()
 
-
     rows = response.json()
 
-
     if not rows:
-
         return pd.DataFrame()
-
 
     df = pd.DataFrame(rows)
 
-
     df["dateString"] = pd.to_datetime(
-
         df["dateString"],
-
         utc=True
-
     )
-
 
     df["sgv_mmol"] = pd.to_numeric(
-
         df["sgv_mmol"],
-
         errors="coerce"
-
     )
-
 
     df = df.dropna(
-
         subset=[
-
             "dateString",
-
             "sgv_mmol",
-
         ]
-
     )
-
 
     df = (
-
         df
-
-        .sort_values(
-            "dateString"
-        )
-
-        .drop_duplicates(
-            "dateString"
-        )
-
+        .sort_values("dateString")
+        .drop_duplicates("dateString")
+        .reset_index(drop=True)
     )
-
 
     return df
 
 
 # =========================================================
-# GET GLUCOSE AT A SPECIFIC TIME
+# GET GLUCOSE AT SPECIFIC TIME
 # =========================================================
 
 def glucose_at_time(
-
     glucose_df,
-
     timestamp,
-
     tolerance_minutes=MATCH_TOLERANCE_MINUTES
-
 ):
 
-    timestamp = pd.Timestamp(
-        timestamp
-    )
-
+    timestamp = pd.Timestamp(timestamp)
 
     if timestamp.tzinfo is None:
 
-        timestamp = (
-            timestamp
-            .tz_localize("UTC")
-        )
+        timestamp = timestamp.tz_localize("UTC")
 
     else:
 
-        timestamp = (
-            timestamp
-            .tz_convert("UTC")
-        )
-
+        timestamp = timestamp.tz_convert("UTC")
 
     differences = (
-
         glucose_df["dateString"] -
         timestamp
-
     ).abs()
 
-
     if differences.empty:
-
         return np.nan
-
 
     idx = differences.idxmin()
 
-
     difference = differences.loc[idx]
 
-
     if difference <= pd.Timedelta(
-
         minutes=tolerance_minutes
-
     ):
 
         return float(
-
             glucose_df.loc[
                 idx,
                 "sgv_mmol"
             ]
-
         )
-
 
     return np.nan
 
 
 # =========================================================
-# BUILD ONE FEATURE SET
+# BUILD FEATURES FOR ONE FORECAST
 # =========================================================
 
 def build_features_for_forecast(
-
     forecast_row,
-
     glucose_df
-
 ):
 
-    created_at = (
-        forecast_row[
-            "forecast_created_at"
-        ]
-    )
-
+    created_at = forecast_row[
+        "forecast_created_at"
+    ]
 
     # -----------------------------------------------------
     # CURRENT GLUCOSE
     # -----------------------------------------------------
 
     current = glucose_at_time(
-
         glucose_df,
-
         created_at
-
     )
 
-
     if pd.isna(current):
-
         return None
 
 
     # -----------------------------------------------------
-    # PAST GLUCOSE
+    # HISTORICAL GLUCOSE
     # -----------------------------------------------------
 
     glucose_5m = glucose_at_time(
-
         glucose_df,
-
-        created_at -
-        pd.Timedelta(minutes=5)
-
+        created_at - pd.Timedelta(minutes=5)
     )
-
 
     glucose_15m = glucose_at_time(
-
         glucose_df,
-
-        created_at -
-        pd.Timedelta(minutes=15)
-
+        created_at - pd.Timedelta(minutes=15)
     )
-
 
     glucose_30m = glucose_at_time(
-
         glucose_df,
-
-        created_at -
-        pd.Timedelta(minutes=30)
-
+        created_at - pd.Timedelta(minutes=30)
     )
 
-
     glucose_60m = glucose_at_time(
-
         glucose_df,
-
-        created_at -
-        pd.Timedelta(minutes=60)
-
+        created_at - pd.Timedelta(minutes=60)
     )
 
 
     # -----------------------------------------------------
-    # CHANGES
+    # DELTA
     # -----------------------------------------------------
 
     if pd.notna(glucose_5m):
@@ -493,31 +323,116 @@ def build_features_for_forecast(
 
 
     # -----------------------------------------------------
-    # TIME
+    # VELOCITY
+    # -----------------------------------------------------
+    #
+    # mmol/l per minute
+
+    if pd.notna(delta_5m):
+
+        velocity_5m = (
+            delta_5m / 5.0
+        )
+
+    else:
+
+        velocity_5m = np.nan
+
+
+    if pd.notna(delta_15m):
+
+        velocity_15m = (
+            delta_15m / 15.0
+        )
+
+    else:
+
+        velocity_15m = np.nan
+
+
+    if pd.notna(delta_30m):
+
+        velocity_30m = (
+            delta_30m / 30.0
+        )
+
+    else:
+
+        velocity_30m = np.nan
+
+
+    if pd.notna(delta_60m):
+
+        velocity_60m = (
+            delta_60m / 60.0
+        )
+
+    else:
+
+        velocity_60m = np.nan
+
+
+    # -----------------------------------------------------
+    # ACCELERATION
+    # -----------------------------------------------------
+
+    if (
+        pd.notna(velocity_5m)
+        and
+        pd.notna(velocity_15m)
+    ):
+
+        acceleration_5_15 = (
+            velocity_5m -
+            velocity_15m
+        )
+
+    else:
+
+        acceleration_5_15 = np.nan
+
+
+    if (
+        pd.notna(velocity_15m)
+        and
+        pd.notna(velocity_30m)
+    ):
+
+        acceleration_15_30 = (
+            velocity_15m -
+            velocity_30m
+        )
+
+    else:
+
+        acceleration_15_30 = np.nan
+
+
+    # -----------------------------------------------------
+    # TIME FEATURES
     # -----------------------------------------------------
 
     hour = created_at.hour
 
     minute = created_at.minute
 
-
-    hour_sin = np.sin(
-
-        2 *
-        np.pi *
-        hour /
-        24
-
+    hour_decimal = (
+        hour +
+        minute / 60.0
     )
 
-
-    hour_cos = np.cos(
-
+    hour_sin = np.sin(
         2 *
         np.pi *
-        hour /
-        24
+        hour_decimal /
+        24.0
+    )
 
+    hour_cos = np.cos(
+        2 *
+        np.pi *
+        hour_decimal /
+        24.0
     )
 
 
@@ -526,28 +441,20 @@ def build_features_for_forecast(
     # -----------------------------------------------------
 
     actual = float(
-
         forecast_row[
             "actual_mmol"
         ]
-
     )
 
-
     prediction = float(
-
         forecast_row[
             "predicted_mmol"
         ]
-
     )
 
-
     correction_target = (
-
         actual -
         prediction
-
     )
 
 
@@ -572,12 +479,12 @@ def build_features_for_forecast(
                 ]
             ),
 
-        # -------------------------------------------------
-        # FEATURES
-        # -------------------------------------------------
+        # Current state
 
         "current_glucose":
             current,
+
+        # Historical glucose
 
         "glucose_5m":
             glucose_5m,
@@ -591,6 +498,8 @@ def build_features_for_forecast(
         "glucose_60m":
             glucose_60m,
 
+        # Delta
+
         "delta_5m":
             delta_5m,
 
@@ -603,8 +512,34 @@ def build_features_for_forecast(
         "delta_60m":
             delta_60m,
 
+        # Velocity
+
+        "velocity_5m":
+            velocity_5m,
+
+        "velocity_15m":
+            velocity_15m,
+
+        "velocity_30m":
+            velocity_30m,
+
+        "velocity_60m":
+            velocity_60m,
+
+        # Acceleration
+
+        "acceleration_5_15":
+            acceleration_5_15,
+
+        "acceleration_15_30":
+            acceleration_15_30,
+
+        # TimesFM
+
         "timesfm_prediction":
             prediction,
+
+        # Time
 
         "hour":
             hour,
@@ -618,16 +553,13 @@ def build_features_for_forecast(
         "hour_cos":
             hour_cos,
 
-        # -------------------------------------------------
-        # TARGET
-        # -------------------------------------------------
+        # Target
 
         "actual_glucose":
             actual,
 
         "correction_target":
             correction_target,
-
     }
 
 
@@ -636,64 +568,43 @@ def build_features_for_forecast(
 # =========================================================
 
 def build_dataset(
-
     evaluations,
-
     glucose_df
-
 ):
 
     rows = []
 
+    total = len(evaluations)
 
-    for index, forecast in (
-        evaluations.iterrows()
+    for position, (_, forecast) in enumerate(
+        evaluations.iterrows(),
+        start=1
     ):
 
-        features = (
-            build_features_for_forecast(
-                forecast,
-                glucose_df
-            )
+        features = build_features_for_forecast(
+            forecast,
+            glucose_df
         )
 
-
         if features is not None:
+            rows.append(features)
 
-            rows.append(
-                features
-            )
-
-
-        if (
-            (index + 1) % 100 == 0
-        ):
+        if position % 100 == 0:
 
             print(
-
                 f"Processed "
-                f"{index + 1} / "
-                f"{len(evaluations)} "
-                f"evaluations"
-
+                f"{position} / "
+                f"{total} evaluations"
             )
 
-
     if not rows:
-
         return pd.DataFrame()
 
-
-    dataset = pd.DataFrame(
-        rows
-    )
-
-
-    return dataset
+    return pd.DataFrame(rows)
 
 
 # =========================================================
-# REMOVE INCOMPLETE ROWS
+# CLEAN DATASET
 # =========================================================
 
 def clean_dataset(dataset):
@@ -703,10 +614,17 @@ def clean_dataset(dataset):
         "current_glucose",
 
         "delta_5m",
-
         "delta_15m",
-
         "delta_30m",
+        "delta_60m",
+
+        "velocity_5m",
+        "velocity_15m",
+        "velocity_30m",
+        "velocity_60m",
+
+        "acceleration_5_15",
+        "acceleration_15_30",
 
         "timesfm_prediction",
 
@@ -718,19 +636,13 @@ def clean_dataset(dataset):
 
     ]
 
-
     before = len(dataset)
 
-
     dataset = dataset.dropna(
-
         subset=required_columns
-
     )
 
-
     after = len(dataset)
-
 
     print()
 
@@ -747,7 +659,6 @@ def clean_dataset(dataset):
         f"{before - after}"
     )
 
-
     return dataset
 
 
@@ -757,16 +668,14 @@ def clean_dataset(dataset):
 
 def save_dataset(dataset):
 
-    output_file = "personalization_dataset.csv"
-
-    dataset.to_csv(
-
-        output_file,
-
-        index=False
-
+    output_file = (
+        "personalization_dataset.csv"
     )
 
+    dataset.to_csv(
+        output_file,
+        index=False
+    )
 
     print()
 
@@ -793,7 +702,6 @@ def print_preview(dataset):
 
         return
 
-
     print()
 
     print(
@@ -808,11 +716,9 @@ def print_preview(dataset):
         "=========================================================="
     )
 
-
     print(
         f"Rows: {len(dataset)}"
     )
-
 
     print()
 
@@ -828,6 +734,12 @@ def print_preview(dataset):
 
         "delta_30m",
 
+        "velocity_5m",
+
+        "velocity_15m",
+
+        "acceleration_5_15",
+
         "timesfm_prediction",
 
         "actual_glucose",
@@ -836,15 +748,10 @@ def print_preview(dataset):
 
     ]
 
-
     print(
-
         dataset[columns]
         .tail(10)
-        .to_string(
-            index=False
-        )
-
+        .to_string(index=False)
     )
 
 
@@ -858,9 +765,7 @@ def main():
         "Loading forecast evaluations..."
     )
 
-
     evaluations = load_evaluations()
-
 
     if evaluations.empty:
 
@@ -870,13 +775,10 @@ def main():
 
         return
 
-
     print(
-
         f"Loaded "
         f"{len(evaluations)} "
-        "evaluated forecasts."
-
+        f"evaluated forecasts."
     )
 
 
@@ -884,9 +786,7 @@ def main():
         "Loading glucose history..."
     )
 
-
     glucose_df = load_glucose()
-
 
     if glucose_df.empty:
 
@@ -896,26 +796,17 @@ def main():
 
         return
 
-
     print(
-
         f"Loaded "
         f"{len(glucose_df)} "
-        "glucose measurements."
-
+        f"glucose measurements."
     )
 
-
     print(
-
         "Glucose range: "
-
         f"{glucose_df['dateString'].min().isoformat()}"
-
         " → "
-
         f"{glucose_df['dateString'].max().isoformat()}"
-
     )
 
 
@@ -924,13 +815,9 @@ def main():
     # -----------------------------------------------------
 
     dataset = build_dataset(
-
         evaluations,
-
         glucose_df
-
     )
-
 
     if dataset.empty:
 
@@ -948,7 +835,6 @@ def main():
     dataset = clean_dataset(
         dataset
     )
-
 
     if dataset.empty:
 
