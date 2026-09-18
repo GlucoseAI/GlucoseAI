@@ -23,16 +23,14 @@ METRICS_FILE = "personalization_metrics.json"
 
 RIDGE_ALPHA = 1.0
 
-# Minimum number of forecast runs required before we
-# start testing the personalization model.
 MIN_TRAIN_RUNS = 3
 
 
 # =========================================================
-# FEATURES
+# BASE FEATURES
 # =========================================================
 
-FEATURE_COLUMNS = [
+BASE_FEATURE_COLUMNS = [
 
     "current_glucose",
 
@@ -46,8 +44,6 @@ FEATURE_COLUMNS = [
 
     "timesfm_prediction",
 
-    "horizon_minutes",
-
     "hour_sin",
 
     "hour_cos",
@@ -56,6 +52,36 @@ FEATURE_COLUMNS = [
 
 
 TARGET_COLUMN = "correction_target"
+
+
+# =========================================================
+# HORIZONS
+# =========================================================
+
+# TimesFM currently produces forecasts every 5 minutes
+# up to 120 minutes.
+
+HORIZONS = list(
+    range(5, 125, 5)
+)
+
+
+HORIZON_FEATURE_COLUMNS = [
+
+    f"horizon_{h}"
+
+    for h in HORIZONS
+
+]
+
+
+FEATURE_COLUMNS = (
+
+    BASE_FEATURE_COLUMNS
+    +
+    HORIZON_FEATURE_COLUMNS
+
+)
 
 
 # =========================================================
@@ -69,7 +95,9 @@ def load_dataset():
     )
 
 
-    if not os.path.exists(DATASET_FILE):
+    if not os.path.exists(
+        DATASET_FILE
+    ):
 
         raise FileNotFoundError(
 
@@ -100,9 +128,10 @@ def prepare_data(df):
 
     required_columns = (
 
-        FEATURE_COLUMNS
+        BASE_FEATURE_COLUMNS
         +
         [
+            "horizon_minutes",
             TARGET_COLUMN,
             "forecast_created_at",
             "actual_glucose",
@@ -156,9 +185,10 @@ def prepare_data(df):
 
     numeric_columns = (
 
-        FEATURE_COLUMNS
+        BASE_FEATURE_COLUMNS
         +
         [
+            "horizon_minutes",
             TARGET_COLUMN,
             "actual_glucose",
         ]
@@ -186,17 +216,24 @@ def prepare_data(df):
 
     df = df.dropna(
 
-        subset=
+        subset=(
 
-            FEATURE_COLUMNS
+            BASE_FEATURE_COLUMNS
             +
             [
+                "horizon_minutes",
                 TARGET_COLUMN,
                 "actual_glucose",
             ]
 
+        )
+
     )
 
+
+    # -----------------------------------------------------
+    # Sort chronologically
+    # -----------------------------------------------------
 
     df = (
 
@@ -229,27 +266,34 @@ def prepare_data(df):
 
 
 # =========================================================
-# CREATE FORECAST RUNS
+# ADD HORIZON FEATURES
 # =========================================================
 
-def get_forecast_runs(df):
+def add_horizon_features(df):
 
-    runs = (
-
-        df[
-            "forecast_created_at"
-        ]
-
-        .drop_duplicates()
-
-        .sort_values()
-
-        .reset_index(drop=True)
-
-    )
+    df = df.copy()
 
 
-    return runs
+    # -----------------------------------------------------
+    # Create one-hot horizon columns
+    # -----------------------------------------------------
+
+    for horizon in HORIZONS:
+
+        column = (
+            f"horizon_{horizon}"
+        )
+
+
+        df[column] = (
+
+            df["horizon_minutes"]
+            == horizon
+
+        ).astype(float)
+
+
+    return df
 
 
 # =========================================================
@@ -287,12 +331,91 @@ def create_model():
 
 
 # =========================================================
+# GET FORECAST RUNS
+# =========================================================
+
+def get_forecast_runs(df):
+
+    return (
+
+        df[
+            "forecast_created_at"
+        ]
+
+        .drop_duplicates()
+
+        .sort_values()
+
+        .reset_index(drop=True)
+
+    )
+
+
+# =========================================================
+# CALCULATE METRICS
+# =========================================================
+
+def calculate_metrics(
+    actual,
+    predicted
+):
+
+    errors = (
+        actual -
+        predicted
+    )
+
+
+    mae = mean_absolute_error(
+
+        actual,
+
+        predicted
+
+    )
+
+
+    rmse = np.sqrt(
+
+        mean_squared_error(
+
+            actual,
+
+            predicted
+
+        )
+
+    )
+
+
+    bias = np.mean(
+        errors
+    )
+
+
+    return {
+
+        "mae":
+            float(mae),
+
+        "rmse":
+            float(rmse),
+
+        "bias":
+            float(bias),
+
+    }
+
+
+# =========================================================
 # WALK-FORWARD BACKTEST
 # =========================================================
 
 def walk_forward_backtest(df):
 
-    runs = get_forecast_runs(df)
+    runs = get_forecast_runs(
+        df
+    )
 
 
     print()
@@ -329,7 +452,7 @@ def walk_forward_backtest(df):
 
 
     # -----------------------------------------------------
-    # Each future run becomes a separate test
+    # Every future forecast run becomes a test run
     # -----------------------------------------------------
 
     for test_index in range(
@@ -339,7 +462,6 @@ def walk_forward_backtest(df):
         len(runs)
 
     ):
-
 
         train_runs = set(
 
@@ -356,31 +478,47 @@ def walk_forward_backtest(df):
 
 
         train_df = df[
+
             df[
                 "forecast_created_at"
             ].isin(train_runs)
+
         ].copy()
 
 
         test_df = df[
+
             df[
                 "forecast_created_at"
             ] == test_run
+
         ].copy()
 
 
-        if len(train_df) == 0:
-
+        if train_df.empty:
             continue
 
 
-        if len(test_df) == 0:
-
+        if test_df.empty:
             continue
 
 
         # -------------------------------------------------
-        # Train model only on past data
+        # ADD HORIZON FEATURES
+        # -------------------------------------------------
+
+        train_df = add_horizon_features(
+            train_df
+        )
+
+
+        test_df = add_horizon_features(
+            test_df
+        )
+
+
+        # -------------------------------------------------
+        # TRAIN RIDGE
         # -------------------------------------------------
 
         model = create_model()
@@ -406,7 +544,7 @@ def walk_forward_backtest(df):
 
 
         # -------------------------------------------------
-        # Test
+        # TEST DATA
         # -------------------------------------------------
 
         X_test = test_df[
@@ -424,21 +562,86 @@ def walk_forward_backtest(df):
         ].to_numpy()
 
 
-        correction = model.predict(
+        # -------------------------------------------------
+        # TIMESFM
+        # -------------------------------------------------
+
+        timesfm_metrics = calculate_metrics(
+
+            actual,
+
+            timesfm
+
+        )
+
+
+        # -------------------------------------------------
+        # SIMPLE MEAN BIAS CORRECTION
+        # -------------------------------------------------
+        #
+        # IMPORTANT:
+        # The correction is calculated ONLY from
+        # training data.
+        #
+        # Therefore no future information leaks
+        # into the test.
+
+        train_bias = np.mean(
+
+            train_df[
+                TARGET_COLUMN
+            ].to_numpy()
+
+        )
+
+
+        bias_corrected = (
+
+            timesfm +
+            train_bias
+
+        )
+
+
+        bias_metrics = calculate_metrics(
+
+            actual,
+
+            bias_corrected
+
+        )
+
+
+        # -------------------------------------------------
+        # RIDGE PERSONALIZATION
+        # -------------------------------------------------
+
+        predicted_correction = model.predict(
+
             X_test
+
         )
 
 
         personalized = (
 
             timesfm +
-            correction
+            predicted_correction
+
+        )
+
+
+        personalized_metrics = calculate_metrics(
+
+            actual,
+
+            personalized
 
         )
 
 
         # -------------------------------------------------
-        # Save each prediction
+        # SAVE INDIVIDUAL RESULTS
         # -------------------------------------------------
 
         for i in range(
@@ -448,11 +651,13 @@ def walk_forward_backtest(df):
             all_results.append({
 
                 "forecast_created_at":
+
                     test_df.iloc[i][
                         "forecast_created_at"
                     ],
 
                 "horizon_minutes":
+
                     int(
                         test_df.iloc[i][
                             "horizon_minutes"
@@ -460,27 +665,45 @@ def walk_forward_backtest(df):
                     ),
 
                 "actual_glucose":
+
                     float(
                         actual[i]
                     ),
 
                 "timesfm_prediction":
+
                     float(
                         timesfm[i]
                     ),
 
+                "bias_prediction":
+
+                    float(
+                        bias_corrected[i]
+                    ),
+
                 "personalized_prediction":
+
                     float(
                         personalized[i]
                     ),
 
                 "timesfm_error":
+
                     float(
                         actual[i] -
                         timesfm[i]
                     ),
 
+                "bias_error":
+
+                    float(
+                        actual[i] -
+                        bias_corrected[i]
+                    ),
+
                 "personalized_error":
+
                     float(
                         actual[i] -
                         personalized[i]
@@ -490,26 +713,8 @@ def walk_forward_backtest(df):
 
 
         # -------------------------------------------------
-        # Print current test run
+        # PRINT CURRENT RUN
         # -------------------------------------------------
-
-        timesfm_mae = mean_absolute_error(
-
-            actual,
-
-            timesfm
-
-        )
-
-
-        personalized_mae = mean_absolute_error(
-
-            actual,
-
-            personalized
-
-        )
-
 
         print(
 
@@ -522,10 +727,13 @@ def walk_forward_backtest(df):
             f"n={len(test_df)} | "
 
             f"TimesFM MAE="
-            f"{timesfm_mae:.3f} | "
+            f"{timesfm_metrics['mae']:.3f} | "
 
-            f"Personalized MAE="
-            f"{personalized_mae:.3f}"
+            f"Bias MAE="
+            f"{bias_metrics['mae']:.3f} | "
+
+            f"Ridge MAE="
+            f"{personalized_metrics['mae']:.3f}"
 
         )
 
@@ -536,7 +744,7 @@ def walk_forward_backtest(df):
 
 
 # =========================================================
-# CALCULATE OVERALL RESULTS
+# OVERALL RESULTS
 # =========================================================
 
 def calculate_overall_results(
@@ -553,24 +761,17 @@ def calculate_overall_results(
     ].to_numpy()
 
 
+    bias = results[
+        "bias_prediction"
+    ].to_numpy()
+
+
     personalized = results[
         "personalized_prediction"
     ].to_numpy()
 
 
-    # -----------------------------------------------------
-    # TimesFM
-    # -----------------------------------------------------
-
-    timesfm_error = (
-
-        actual -
-        timesfm
-
-    )
-
-
-    timesfm_mae = mean_absolute_error(
+    timesfm_metrics = calculate_metrics(
 
         actual,
 
@@ -579,91 +780,20 @@ def calculate_overall_results(
     )
 
 
-    timesfm_rmse = np.sqrt(
+    bias_metrics = calculate_metrics(
 
-        mean_squared_error(
+        actual,
 
-            actual,
-
-            timesfm
-
-        )
+        bias
 
     )
 
 
-    timesfm_bias = np.mean(
-        timesfm_error
-    )
-
-
-    # -----------------------------------------------------
-    # Personalization
-    # -----------------------------------------------------
-
-    personalized_error = (
-
-        actual -
-        personalized
-
-    )
-
-
-    personalized_mae = mean_absolute_error(
+    personalized_metrics = calculate_metrics(
 
         actual,
 
         personalized
-
-    )
-
-
-    personalized_rmse = np.sqrt(
-
-        mean_squared_error(
-
-            actual,
-
-            personalized
-
-        )
-
-    )
-
-
-    personalized_bias = np.mean(
-        personalized_error
-    )
-
-
-    # -----------------------------------------------------
-    # Improvement
-    # -----------------------------------------------------
-
-    mae_improvement = (
-
-        (
-            timesfm_mae -
-            personalized_mae
-        )
-        /
-        timesfm_mae
-        *
-        100
-
-    )
-
-
-    rmse_improvement = (
-
-        (
-            timesfm_rmse -
-            personalized_rmse
-        )
-        /
-        timesfm_rmse
-        *
-        100
 
     )
 
@@ -681,57 +811,14 @@ def calculate_overall_results(
                 .nunique()
             ),
 
-        "timesfm": {
+        "timesfm":
+            timesfm_metrics,
 
-            "mae":
-                float(
-                    timesfm_mae
-                ),
+        "bias_correction":
+            bias_metrics,
 
-            "rmse":
-                float(
-                    timesfm_rmse
-                ),
-
-            "bias":
-                float(
-                    timesfm_bias
-                ),
-
-        },
-
-        "personalized": {
-
-            "mae":
-                float(
-                    personalized_mae
-                ),
-
-            "rmse":
-                float(
-                    personalized_rmse
-                ),
-
-            "bias":
-                float(
-                    personalized_bias
-                ),
-
-        },
-
-        "improvement": {
-
-            "mae_percent":
-                float(
-                    mae_improvement
-                ),
-
-            "rmse_percent":
-                float(
-                    rmse_improvement
-                ),
-
-        },
+        "personalized":
+            personalized_metrics,
 
     }
 
@@ -765,12 +852,17 @@ def calculate_horizon_results(
         ].to_numpy()
 
 
+        bias = group[
+            "bias_prediction"
+        ].to_numpy()
+
+
         personalized = group[
             "personalized_prediction"
         ].to_numpy()
 
 
-        timesfm_mae = mean_absolute_error(
+        timesfm_metrics = calculate_metrics(
 
             actual,
 
@@ -779,37 +871,20 @@ def calculate_horizon_results(
         )
 
 
-        personalized_mae = mean_absolute_error(
+        bias_metrics = calculate_metrics(
+
+            actual,
+
+            bias
+
+        )
+
+
+        personalized_metrics = calculate_metrics(
 
             actual,
 
             personalized
-
-        )
-
-
-        timesfm_rmse = np.sqrt(
-
-            mean_squared_error(
-
-                actual,
-
-                timesfm
-
-            )
-
-        )
-
-
-        personalized_rmse = np.sqrt(
-
-            mean_squared_error(
-
-                actual,
-
-                personalized
-
-            )
 
         )
 
@@ -823,24 +898,46 @@ def calculate_horizon_results(
                 len(group),
 
             "timesfm_mae":
-                timesfm_mae,
+                timesfm_metrics[
+                    "mae"
+                ],
+
+            "bias_mae":
+                bias_metrics[
+                    "mae"
+                ],
 
             "personalized_mae":
-                personalized_mae,
+                personalized_metrics[
+                    "mae"
+                ],
 
             "timesfm_rmse":
-                timesfm_rmse,
+                timesfm_metrics[
+                    "rmse"
+                ],
+
+            "bias_rmse":
+                bias_metrics[
+                    "rmse"
+                ],
 
             "personalized_rmse":
-                personalized_rmse,
+                personalized_metrics[
+                    "rmse"
+                ],
 
         })
 
 
-    return pd.DataFrame(
-        rows
-    ).sort_values(
-        "horizon_minutes"
+    return (
+
+        pd.DataFrame(rows)
+
+        .sort_values(
+            "horizon_minutes"
+        )
+
     )
 
 
@@ -882,6 +979,10 @@ def print_results(
     )
 
 
+    # -----------------------------------------------------
+    # TIMESFM
+    # -----------------------------------------------------
+
     print()
 
     print(
@@ -917,14 +1018,57 @@ def print_results(
     )
 
 
+    # -----------------------------------------------------
+    # SIMPLE BIAS
+    # -----------------------------------------------------
+
     print()
 
     print(
-        "TIMESFM + PERSONALIZATION"
+        "TIMESFM + MEAN BIAS CORRECTION"
     )
 
     print(
-        "-------------------------"
+        "-------------------------------"
+    )
+
+
+    print(
+
+        f"MAE  : "
+        f"{metrics['bias_correction']['mae']:.3f} mmol/l"
+
+    )
+
+
+    print(
+
+        f"RMSE : "
+        f"{metrics['bias_correction']['rmse']:.3f} mmol/l"
+
+    )
+
+
+    print(
+
+        f"Bias : "
+        f"{metrics['bias_correction']['bias']:+.3f} mmol/l"
+
+    )
+
+
+    # -----------------------------------------------------
+    # RIDGE
+    # -----------------------------------------------------
+
+    print()
+
+    print(
+        "TIMESFM + RIDGE PERSONALIZATION"
+    )
+
+    print(
+        "--------------------------------"
     )
 
 
@@ -952,32 +1096,9 @@ def print_results(
     )
 
 
-    print()
-
-    print(
-        "IMPROVEMENT"
-    )
-
-    print(
-        "-----------"
-    )
-
-
-    print(
-
-        f"MAE : "
-        f"{metrics['improvement']['mae_percent']:+.1f}%"
-
-    )
-
-
-    print(
-
-        f"RMSE: "
-        f"{metrics['improvement']['rmse_percent']:+.1f}%"
-
-    )
-
+    # -----------------------------------------------------
+    # HORIZON RESULTS
+    # -----------------------------------------------------
 
     print()
 
@@ -995,15 +1116,14 @@ def print_results(
     print(
 
         "Horizon | Samples | "
-        "TimesFM MAE | "
-        "Personalized MAE"
+        "TimesFM | Bias | Ridge"
 
     )
 
 
     print(
 
-        "--------+---------+-------------+-----------------"
+        "--------+---------+---------+------+------"
 
     )
 
@@ -1016,18 +1136,20 @@ def print_results(
 
             f"{int(row['samples']):7d} | "
 
-            f"{row['timesfm_mae']:11.3f} | "
+            f"{row['timesfm_mae']:7.3f} | "
 
-            f"{row['personalized_mae']:15.3f}"
+            f"{row['bias_mae']:4.3f} | "
+
+            f"{row['personalized_mae']:5.3f}"
 
         )
 
 
 # =========================================================
-# SAVE RESULTS
+# SAVE METRICS
 # =========================================================
 
-def save_results(
+def save_metrics(
     metrics,
     horizon_results
 ):
@@ -1038,12 +1160,15 @@ def save_results(
             metrics,
 
         "by_horizon":
+
             horizon_results
+
             .replace(
                 {
                     np.nan: None
                 }
             )
+
             .to_dict(
                 orient="records"
             ),
@@ -1090,7 +1215,13 @@ def train_final_model(
     print()
 
     print(
-        "Training final model on all available data..."
+        "Training final Ridge model "
+        "on all available data..."
+    )
+
+
+    df = add_horizon_features(
+        df
     )
 
 
@@ -1108,8 +1239,11 @@ def train_final_model(
 
 
     model.fit(
+
         X,
+
         y
+
     )
 
 
@@ -1125,9 +1259,6 @@ def train_final_model(
     print(
         f"Final model saved to {MODEL_FILE}"
     )
-
-
-    return model
 
 
 # =========================================================
@@ -1153,7 +1284,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # WALK-FORWARD
+    # WALK-FORWARD BACKTEST
     # -----------------------------------------------------
 
     results = walk_forward_backtest(
@@ -1172,7 +1303,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # METRICS
+    # CALCULATE RESULTS
     # -----------------------------------------------------
 
     metrics = calculate_overall_results(
@@ -1199,10 +1330,10 @@ def main():
 
 
     # -----------------------------------------------------
-    # SAVE METRICS
+    # SAVE
     # -----------------------------------------------------
 
-    save_results(
+    save_metrics(
 
         metrics,
 
@@ -1212,8 +1343,11 @@ def main():
 
 
     # -----------------------------------------------------
-    # FINAL MODEL
+    # TRAIN FINAL MODEL
     # -----------------------------------------------------
+    #
+    # This model is NOT yet connected to the live
+    # forecast. It is only stored for later use.
 
     train_final_model(
         df
@@ -1227,7 +1361,7 @@ def main():
     )
 
     print(
-        "Walk-forward training completed successfully."
+        "Personalization v3 completed successfully."
     )
 
     print(
