@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Glucose AI</title>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
@@ -82,6 +83,40 @@
       font-size: 13px;
     }
 
+    /* Run button */
+
+    .run-button-container {
+      text-align: center;
+      margin: 24px 0;
+    }
+
+    #runForecastBtn {
+      padding: 13px 25px;
+      font-size: 16px;
+      font-weight: 700;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      background: #111827;
+      color: white;
+      transition: opacity 0.2s;
+    }
+
+    #runForecastBtn:hover {
+      opacity: 0.85;
+    }
+
+    #runForecastBtn:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    #runStatus {
+      margin-top: 10px;
+      color: #667085;
+      font-size: 14px;
+    }
+
     @media (max-width: 850px) {
       .cards {
         grid-template-columns: repeat(2, 1fr);
@@ -114,6 +149,8 @@
     Predikce glukózy pomocí TimesFM 3.0
   </p>
 
+  <!-- Information cards -->
+
   <div class="cards">
 
     <div class="card">
@@ -136,10 +173,31 @@
 
     <div class="card">
       <div class="label">Poslední aktualizace</div>
-      <div class="value" id="updated" style="font-size:20px">--</div>
+      <div class="value" id="updated" style="font-size:20px">
+        --
+      </div>
     </div>
 
   </div>
+
+
+  <!-- Run forecast button -->
+
+  <div class="run-button-container">
+
+    <button
+      id="runForecastBtn"
+      onclick="runForecast()"
+    >
+      ▶ Spustit novou předpověď
+    </button>
+
+    <div id="runStatus"></div>
+
+  </div>
+
+
+  <!-- Chart -->
 
   <div class="chart-card">
 
@@ -148,11 +206,14 @@
     </div>
 
     <p class="legend-note">
-      Graf zobrazuje posledních 24 hodin skutečných měření a 2 hodiny predikce.
-      Referenční pásma jsou pouze orientační a nejsou určena pro rozhodování o léčbě.
+      Graf zobrazuje posledních 24 hodin skutečných měření
+      a 2 hodiny predikce.
+      Referenční pásma jsou pouze orientační a nejsou určena
+      pro rozhodování o léčbě.
     </p>
 
   </div>
+
 
   <div id="status">
     Načítám data…
@@ -160,34 +221,83 @@
 
 </div>
 
+
 <script>
+
+/* =========================================================
+   SUPABASE
+   ========================================================= */
 
 const SUPABASE_URL =
   "https://tpzwxutiveixprniptyh.supabase.co";
 
-// Ponech zde svůj současný Supabase PUBLISHABLE key.
+/*
+ * SEM VLOŽ SVŮJ STÁVAJÍCÍ SUPABASE PUBLISHABLE KEY
+ */
 const SUPABASE_KEY =
   "sb_publishable_EJsUJovb-CBE2TQs25Dvpg_iVBuhMal";
 
 
+/* =========================================================
+   GITHUB
+   ========================================================= */
+
+/*
+ * SEM VLOŽ GITHUB PERSONAL ACCESS TOKEN
+ *
+ * Token musí mít:
+ * Repository permissions
+ * → Actions
+ * → Read and write
+ */
+const GITHUB_TOKEN =
+  "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";
+
+
+const GITHUB_REPO_OWNER = "GlucoseAI";
+const GITHUB_REPO_NAME = "GlucoseAI";
+const GITHUB_WORKFLOW = "run_script.yml";
+const GITHUB_BRANCH = "main";
+
+
+/* =========================================================
+   GLOBAL VARIABLES
+   ========================================================= */
+
 let chart = null;
 
 
+/* =========================================================
+   SUPABASE HEADERS
+   ========================================================= */
+
 function supabaseHeaders() {
+
   return {
     "apikey": SUPABASE_KEY,
     "Authorization": `Bearer ${SUPABASE_KEY}`
   };
+
 }
 
 
+/* =========================================================
+   TIME FORMAT
+   ========================================================= */
+
 function fmtTime(ts) {
+
   return new Date(ts).toLocaleTimeString("cs-CZ", {
     hour: "2-digit",
     minute: "2-digit"
   });
+
 }
 
+
+/* =========================================================
+   TREND
+   ========================================================= */
 
 function trendInfo(values) {
 
@@ -204,28 +314,35 @@ function trendInfo(values) {
   const delta = b - a;
 
   if (delta > 0.25) {
+
     return {
       arrow: "↑",
       text: "stoupá"
     };
+
   }
 
   if (delta < -0.25) {
+
     return {
       arrow: "↓",
       text: "klesá"
     };
+
   }
 
   return {
     arrow: "→",
     text: "stabilní"
   };
+
 }
 
 
-// Light horizontal reference bands.
-// They are visual reference only.
+/* =========================================================
+   REFERENCE BANDS
+   ========================================================= */
+
 const referenceBands = {
 
   id: "referenceBands",
@@ -294,17 +411,155 @@ const referenceBands = {
     });
 
     ctx.restore();
+
   }
+
 };
 
+
+/* =========================================================
+   RUN GITHUB WORKFLOW
+   ========================================================= */
+
+async function runForecast() {
+
+  const button =
+    document.getElementById("runForecastBtn");
+
+  const status =
+    document.getElementById("runStatus");
+
+
+  button.disabled = true;
+
+  button.textContent =
+    "⏳ Spouštím...";
+
+  status.textContent =
+    "Spouštím GitHub Actions...";
+
+
+  try {
+
+    const url =
+      `https://api.github.com/repos/` +
+      `${GITHUB_REPO_OWNER}/` +
+      `${GITHUB_REPO_NAME}/` +
+      `actions/workflows/` +
+      `${GITHUB_WORKFLOW}/dispatches`;
+
+
+    const response = await fetch(
+      url,
+      {
+        method: "POST",
+
+        headers: {
+
+          "Accept":
+            "application/vnd.github+json",
+
+          "Authorization":
+            `Bearer ${GITHUB_TOKEN}`,
+
+          "X-GitHub-Api-Version":
+            "2022-11-28",
+
+          "Content-Type":
+            "application/json"
+
+        },
+
+        body: JSON.stringify({
+          ref: GITHUB_BRANCH
+        })
+
+      }
+    );
+
+
+    if (!response.ok) {
+
+      const error =
+        await response.text();
+
+      console.error(
+        "GitHub API error:",
+        error
+      );
+
+      throw new Error(
+        `GitHub API HTTP ${response.status}`
+      );
+
+    }
+
+
+    button.textContent =
+      "✓ Předpověď spuštěna";
+
+    status.textContent =
+      "GitHub Actions právě zpracovává nová data.";
+
+
+    /*
+     * TimesFM workflow u tebe trvá přibližně
+     * 1–2 minuty.
+     *
+     * Po 2,5 minutách znovu načteme data.
+     */
+
+    setTimeout(
+      async () => {
+
+        status.textContent =
+          "Načítám novou předpověď...";
+
+        await loadData();
+
+        button.disabled = false;
+
+        button.textContent =
+          "▶ Spustit novou předpověď";
+
+      },
+      150000
+    );
+
+
+  } catch (error) {
+
+    console.error(error);
+
+    button.disabled = false;
+
+    button.textContent =
+      "❌ Chyba";
+
+    status.textContent =
+      "Nepodařilo se spustit GitHub Actions.";
+
+  }
+
+}
+
+
+/* =========================================================
+   LOAD DATA FROM SUPABASE
+   ========================================================= */
 
 async function loadData() {
 
   try {
 
+
+    /*
+     * Kontrola, aby se nezapomněl vložit key.
+     */
+
     if (
       SUPABASE_KEY ===
-      "SEM_VLOZ_SVŮJ_SOUČASNÝ_PUBLISHABLE_KEY"
+      "SEM_VLOZ_SVUJ_SUPABASE_PUBLISHABLE_KEY"
     ) {
 
       throw new Error(
@@ -314,49 +569,83 @@ async function loadData() {
     }
 
 
-    const glucoseUrl =
-      `${SUPABASE_URL}/rest/v1/G_Entries` +
-      `?select=dateString,sgv_mmol` +
-      `&order=dateString.desc&limit=5000`;
+    /*
+     * Glucose data
+     */
 
+    const glucoseUrl =
+
+      `${SUPABASE_URL}/rest/v1/G_Entries` +
+
+      `?select=dateString,sgv_mmol` +
+
+      `&order=dateString.desc` +
+
+      `&limit=5000`;
+
+
+    /*
+     * Forecast data
+     */
 
     const forecastUrl =
+
       `${SUPABASE_URL}/rest/v1/glucose_forecasts` +
-      `?select=forecast_time,predicted_mmol,p10_mmol,p90_mmol` +
-      `&order=forecast_time.asc&limit=24`;
+
+      `?select=` +
+      `forecast_time,` +
+      `predicted_mmol,` +
+      `p10_mmol,` +
+      `p90_mmol` +
+
+      `&order=forecast_time.asc` +
+
+      `&limit=24`;
 
 
-    const [gRes, fRes] =
-      await Promise.all([
+    /*
+     * Load both simultaneously
+     */
 
-        fetch(
-          glucoseUrl,
-          {
-            headers: supabaseHeaders()
-          }
-        ),
+    const [
+      gRes,
+      fRes
+    ] = await Promise.all([
 
-        fetch(
-          forecastUrl,
-          {
-            headers: supabaseHeaders()
-          }
-        )
+      fetch(
+        glucoseUrl,
+        {
+          headers:
+            supabaseHeaders()
+        }
+      ),
 
-      ]);
+      fetch(
+        forecastUrl,
+        {
+          headers:
+            supabaseHeaders()
+        }
+      )
+
+    ]);
 
 
     if (!gRes.ok) {
+
       throw new Error(
         `G_Entries HTTP ${gRes.status}`
       );
+
     }
 
 
     if (!fRes.ok) {
+
       throw new Error(
         `glucose_forecasts HTTP ${fRes.status}`
       );
+
     }
 
 
@@ -368,18 +657,26 @@ async function loadData() {
 
 
     if (!glucose.length) {
+
       throw new Error(
         "Žádná glucose data."
       );
+
     }
 
 
     if (!forecast.length) {
+
       throw new Error(
         "Žádná forecast data."
       );
+
     }
 
+
+    /*
+     * Sort glucose chronologically
+     */
 
     glucose.sort(
       (a, b) =>
@@ -388,7 +685,9 @@ async function loadData() {
     );
 
 
-    // Show last 24h from the current data stream.
+    /*
+     * Latest measurement
+     */
 
     const latest =
       new Date(
@@ -397,6 +696,10 @@ async function loadData() {
         ].dateString
       );
 
+
+    /*
+     * Last 24 hours
+     */
 
     const cutoff =
       new Date(
@@ -413,51 +716,82 @@ async function loadData() {
       );
 
 
+    /*
+     * Actual values
+     */
+
     const actualLabels =
       recent.map(
-        x => fmtTime(x.dateString)
+        x =>
+          fmtTime(x.dateString)
       );
 
 
     const actualValues =
       recent.map(
-        x => Number(x.sgv_mmol)
+        x =>
+          Number(x.sgv_mmol)
       );
 
 
+    /*
+     * Forecast values
+     */
+
     const forecastLabels =
       forecast.map(
-        x => fmtTime(x.forecast_time)
+        x =>
+          fmtTime(x.forecast_time)
       );
 
 
     const forecastValues =
       forecast.map(
-        x => Number(x.predicted_mmol)
+        x =>
+          Number(x.predicted_mmol)
       );
 
 
-    // P10/P90 stále načítáme.
-    // Zatím se ale pouze nezobrazují v grafu.
+    /*
+     * P10 / P90 are still loaded.
+     *
+     * They remain available for future use,
+     * but are NOT displayed on the chart.
+     */
+
     const p10Values =
       forecast.map(
-        x => Number(x.p10_mmol)
+        x =>
+          Number(x.p10_mmol)
       );
 
 
     const p90Values =
       forecast.map(
-        x => Number(x.p90_mmol)
+        x =>
+          Number(x.p90_mmol)
       );
 
+
+    /*
+     * Current glucose
+     */
 
     document.getElementById(
       "current"
     ).textContent =
+
       `${actualValues[
         actualValues.length - 1
       ].toFixed(2)} mmol/l`;
 
+
+    /*
+     * Forecast after 60 minutes
+     *
+     * 5-minute interval
+     * 12th forecast point = 60 min
+     */
 
     const index60 =
       Math.min(
@@ -469,9 +803,15 @@ async function loadData() {
     document.getElementById(
       "forecast60"
     ).textContent =
-      `${forecastValues[index60]
-        .toFixed(2)} mmol/l`;
 
+      `${forecastValues[
+        index60
+      ].toFixed(2)} mmol/l`;
+
+
+    /*
+     * Trend
+     */
 
     const t =
       trendInfo(actualValues);
@@ -489,26 +829,42 @@ async function loadData() {
       t.text;
 
 
+    /*
+     * Last update
+     */
+
     document.getElementById(
       "updated"
     ).textContent =
       fmtTime(latest);
 
 
+    /*
+     * Chart labels
+     */
+
     const labels = [
+
       ...actualLabels,
+
       ...forecastLabels
+
     ];
 
 
-    // Bridge point so the forecast starts
-    // exactly where the actual series ends.
+    /*
+     * Bridge between actual and forecast
+     */
 
     const bridge =
       actualValues[
         actualValues.length - 1
       ];
 
+
+    /*
+     * Actual line
+     */
 
     const actualData = [
 
@@ -520,6 +876,10 @@ async function loadData() {
 
     ];
 
+
+    /*
+     * Forecast median
+     */
 
     const medianData = [
 
@@ -534,9 +894,10 @@ async function loadData() {
     ];
 
 
-    // These arrays remain here intentionally.
-    // They can be displayed later without
-    // changing the data-loading logic.
+    /*
+     * P10 and P90 are kept here
+     * for future use.
+     */
 
     const p10Data = [
 
@@ -564,27 +925,42 @@ async function loadData() {
     ];
 
 
+    /*
+     * Destroy previous chart
+     */
+
     if (chart) {
+
       chart.destroy();
+
     }
 
 
+    /*
+     * Create chart
+     */
+
     chart =
       new Chart(
+
         document.getElementById(
           "glucoseChart"
         ),
+
         {
 
           type: "line",
 
           data: {
 
-            labels,
+            labels: labels,
 
             datasets: [
 
+              /* Actual glucose */
+
               {
+
                 label:
                   "Skutečná glukóza",
 
@@ -598,10 +974,14 @@ async function loadData() {
                 tension: 0.15,
 
                 spanGaps: true
+
               },
 
 
+              /* TimesFM prediction */
+
               {
+
                 label:
                   "TimesFM predikce",
 
@@ -610,19 +990,26 @@ async function loadData() {
 
                 borderWidth: 2,
 
-                borderDash: [6, 4],
+                borderDash:
+                  [6, 4],
 
                 pointRadius: 2,
 
                 tension: 0.15
+
               },
 
 
-              // P90 je zachováno,
-              // ale zatím skryto.
+              /*
+               * P90
+               *
+               * Hidden intentionally.
+               */
 
               {
-                label: "P90",
+
+                label:
+                  "P90",
 
                 data:
                   p90Data,
@@ -631,17 +1018,23 @@ async function loadData() {
 
                 pointRadius: 0,
 
-                fill: "+1",
+                fill: false,
 
                 hidden: true
+
               },
 
 
-              // P10 je zachováno,
-              // ale zatím skryto.
+              /*
+               * P10
+               *
+               * Hidden intentionally.
+               */
 
               {
-                label: "P10",
+
+                label:
+                  "P10",
 
                 data:
                   p10Data,
@@ -653,9 +1046,11 @@ async function loadData() {
                 fill: false,
 
                 hidden: true
+
               }
 
             ]
+
           },
 
 
@@ -701,7 +1096,8 @@ async function loadData() {
 
                   display: true,
 
-                  text: "Čas"
+                  text:
+                    "Čas"
 
                 },
 
@@ -740,13 +1136,22 @@ async function loadData() {
                     const value =
                       context.parsed.y;
 
-                    if (value == null) {
+
+                    if (
+                      value == null
+                    ) {
+
                       return "";
+
                     }
 
+
                     return (
+
                       `${context.dataset.label}: ` +
+
                       `${value.toFixed(2)} mmol/l`
+
                     );
 
                   }
@@ -761,12 +1166,19 @@ async function loadData() {
 
 
           plugins: [
+
             referenceBands
+
           ]
 
         }
+
       );
 
+
+    /*
+     * Status
+     */
 
     document.getElementById(
       "status"
@@ -778,9 +1190,11 @@ async function loadData() {
 
     console.error(err);
 
+
     document.getElementById(
       "status"
     ).textContent =
+
       "Chyba při načítání dat: " +
       err.message;
 
@@ -789,10 +1203,16 @@ async function loadData() {
 }
 
 
+/* =========================================================
+   INITIAL LOAD
+   ========================================================= */
+
 loadData();
 
 
-// Aktualizace každých 5 minut.
+/* =========================================================
+   AUTOMATIC REFRESH EVERY 5 MINUTES
+   ========================================================= */
 
 setInterval(
   loadData,
