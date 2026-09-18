@@ -45,11 +45,8 @@ jobs:
       # =================================================
 
       - name: Install dependencies
-      
         run: |
-      
           python -m pip install --upgrade pip
-      
           pip install requests pandas scikit-learn joblib "timesfm[torch]"
 
 
@@ -116,10 +113,9 @@ jobs:
       # =================================================
 
       - name: Train personalization model
-
-        run: |
-
-          python train_personalization.py
+        env:
+          SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
+        run: python train_personalization.py
 
 
       # =================================================
