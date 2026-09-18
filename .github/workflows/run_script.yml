@@ -111,6 +111,15 @@ jobs:
         run:
 
           python build_personalization_dataset.py
+      # =================================================
+      # TRAIN PERSONALIZATION MODEL
+      # =================================================
+
+      - name: Train personalization model
+
+        run: |
+
+          python train_personalization.py
 
 
       # =================================================
