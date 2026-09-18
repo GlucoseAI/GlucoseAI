@@ -83,6 +83,20 @@ jobs:
         run:
 
           python evaluate_forecasts.py
+      # =================================================
+      # ANALYZE FORECAST ACCURACY
+      # =================================================
+
+      - name: Analyze forecast accuracy
+
+        env:
+
+          SUPABASE_API_KEY:
+            ${{ secrets.SUPABASE_API_KEY }}
+
+        run:
+
+          python analyze_forecasts.py
 
 
       # =================================================
