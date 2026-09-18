@@ -1,6 +1,7 @@
 import os
 import json
 import joblib
+import requests
 
 import numpy as np
 import pandas as pd
@@ -26,6 +27,15 @@ RIDGE_ALPHA = 1.0
 MIN_TRAIN_RUNS = 3
 
 
+SUPABASE_URL = (
+    "https://tpzwxutiveixprniptyh.supabase.co"
+)
+
+EXPERIMENT_TABLE = (
+    "personalization_experiments"
+)
+
+
 # =========================================================
 # BASE FEATURES
 # =========================================================
@@ -35,17 +45,21 @@ BASE_FEATURE_COLUMNS = [
     "current_glucose",
 
     "delta_5m",
-
     "delta_15m",
-
     "delta_30m",
-
     "delta_60m",
+
+    "velocity_5m",
+    "velocity_15m",
+    "velocity_30m",
+    "velocity_60m",
+
+    "acceleration_5_15",
+    "acceleration_15_30",
 
     "timesfm_prediction",
 
     "hour_sin",
-
     "hour_cos",
 
 ]
@@ -57,9 +71,6 @@ TARGET_COLUMN = "correction_target"
 # =========================================================
 # HORIZONS
 # =========================================================
-
-# TimesFM currently produces forecasts every 5 minutes
-# up to 120 minutes.
 
 HORIZONS = list(
     range(5, 125, 5)
@@ -94,28 +105,22 @@ def load_dataset():
         "Loading personalization dataset..."
     )
 
-
     if not os.path.exists(
         DATASET_FILE
     ):
 
         raise FileNotFoundError(
-
             f"Dataset not found: "
             f"{DATASET_FILE}"
-
         )
-
 
     df = pd.read_csv(
         DATASET_FILE
     )
 
-
     print(
         f"Loaded {len(df)} rows."
     )
-
 
     return df
 
@@ -139,7 +144,6 @@ def prepare_data(df):
 
     )
 
-
     missing = [
 
         column
@@ -149,7 +153,6 @@ def prepare_data(df):
         if column not in df.columns
 
     ]
-
 
     if missing:
 
@@ -195,7 +198,6 @@ def prepare_data(df):
 
     )
 
-
     for column in numeric_columns:
 
         df[column] = pd.to_numeric(
@@ -212,7 +214,6 @@ def prepare_data(df):
     # -----------------------------------------------------
 
     before = len(df)
-
 
     df = df.dropna(
 
@@ -273,25 +274,19 @@ def add_horizon_features(df):
 
     df = df.copy()
 
-
-    # -----------------------------------------------------
-    # Create one-hot horizon columns
-    # -----------------------------------------------------
-
     for horizon in HORIZONS:
 
         column = (
             f"horizon_{horizon}"
         )
 
-
         df[column] = (
 
             df["horizon_minutes"]
-            == horizon
+            ==
+            horizon
 
         ).astype(float)
-
 
     return df
 
@@ -302,7 +297,7 @@ def add_horizon_features(df):
 
 def create_model():
 
-    model = Pipeline(
+    return Pipeline(
 
         [
 
@@ -325,9 +320,6 @@ def create_model():
         ]
 
     )
-
-
-    return model
 
 
 # =========================================================
@@ -365,33 +357,27 @@ def calculate_metrics(
         predicted
     )
 
-
     mae = mean_absolute_error(
 
         actual,
-
         predicted
 
     )
-
 
     rmse = np.sqrt(
 
         mean_squared_error(
 
             actual,
-
             predicted
 
         )
 
     )
 
-
     bias = np.mean(
         errors
     )
-
 
     return {
 
@@ -432,9 +418,9 @@ def walk_forward_backtest(df):
         "=========================================================="
     )
 
-
     print(
-        f"Forecast runs available: {len(runs)}"
+        f"Forecast runs available: "
+        f"{len(runs)}"
     )
 
 
@@ -452,13 +438,12 @@ def walk_forward_backtest(df):
 
 
     # -----------------------------------------------------
-    # Every future forecast run becomes a test run
+    # Each future forecast run becomes a test
     # -----------------------------------------------------
 
     for test_index in range(
 
         MIN_TRAIN_RUNS,
-
         len(runs)
 
     ):
@@ -470,7 +455,6 @@ def walk_forward_backtest(df):
             ]
 
         )
-
 
         test_run = runs.iloc[
             test_index
@@ -490,7 +474,9 @@ def walk_forward_backtest(df):
 
             df[
                 "forecast_created_at"
-            ] == test_run
+            ]
+            ==
+            test_run
 
         ].copy()
 
@@ -498,19 +484,17 @@ def walk_forward_backtest(df):
         if train_df.empty:
             continue
 
-
         if test_df.empty:
             continue
 
 
         # -------------------------------------------------
-        # ADD HORIZON FEATURES
+        # HORIZON FEATURES
         # -------------------------------------------------
 
         train_df = add_horizon_features(
             train_df
         )
-
 
         test_df = add_horizon_features(
             test_df
@@ -528,7 +512,6 @@ def walk_forward_backtest(df):
             FEATURE_COLUMNS
         ]
 
-
         y_train = train_df[
             TARGET_COLUMN
         ]
@@ -537,14 +520,13 @@ def walk_forward_backtest(df):
         model.fit(
 
             X_train,
-
             y_train
 
         )
 
 
         # -------------------------------------------------
-        # TEST DATA
+        # TEST
         # -------------------------------------------------
 
         X_test = test_df[
@@ -569,22 +551,14 @@ def walk_forward_backtest(df):
         timesfm_metrics = calculate_metrics(
 
             actual,
-
             timesfm
 
         )
 
 
         # -------------------------------------------------
-        # SIMPLE MEAN BIAS CORRECTION
-        # -------------------------------------------------
-        #
-        # IMPORTANT:
-        # The correction is calculated ONLY from
-        # training data.
-        #
-        # Therefore no future information leaks
-        # into the test.
+        # MEAN BIAS CORRECTION
+        # -----------------------------------------------------
 
         train_bias = np.mean(
 
@@ -606,14 +580,13 @@ def walk_forward_backtest(df):
         bias_metrics = calculate_metrics(
 
             actual,
-
             bias_corrected
 
         )
 
 
         # -------------------------------------------------
-        # RIDGE PERSONALIZATION
+        # RIDGE
         # -------------------------------------------------
 
         predicted_correction = model.predict(
@@ -634,7 +607,6 @@ def walk_forward_backtest(df):
         personalized_metrics = calculate_metrics(
 
             actual,
-
             personalized
 
         )
@@ -774,7 +746,6 @@ def calculate_overall_results(
     timesfm_metrics = calculate_metrics(
 
         actual,
-
         timesfm
 
     )
@@ -783,7 +754,6 @@ def calculate_overall_results(
     bias_metrics = calculate_metrics(
 
         actual,
-
         bias
 
     )
@@ -792,7 +762,6 @@ def calculate_overall_results(
     personalized_metrics = calculate_metrics(
 
         actual,
-
         personalized
 
     )
@@ -865,7 +834,6 @@ def calculate_horizon_results(
         timesfm_metrics = calculate_metrics(
 
             actual,
-
             timesfm
 
         )
@@ -874,7 +842,6 @@ def calculate_horizon_results(
         bias_metrics = calculate_metrics(
 
             actual,
-
             bias
 
         )
@@ -883,7 +850,6 @@ def calculate_horizon_results(
         personalized_metrics = calculate_metrics(
 
             actual,
-
             personalized
 
         )
@@ -898,34 +864,22 @@ def calculate_horizon_results(
                 len(group),
 
             "timesfm_mae":
-                timesfm_metrics[
-                    "mae"
-                ],
+                timesfm_metrics["mae"],
 
             "bias_mae":
-                bias_metrics[
-                    "mae"
-                ],
+                bias_metrics["mae"],
 
             "personalized_mae":
-                personalized_metrics[
-                    "mae"
-                ],
+                personalized_metrics["mae"],
 
             "timesfm_rmse":
-                timesfm_metrics[
-                    "rmse"
-                ],
+                timesfm_metrics["rmse"],
 
             "bias_rmse":
-                bias_metrics[
-                    "rmse"
-                ],
+                bias_metrics["rmse"],
 
             "personalized_rmse":
-                personalized_metrics[
-                    "rmse"
-                ],
+                personalized_metrics["rmse"],
 
         })
 
@@ -1019,7 +973,7 @@ def print_results(
 
 
     # -----------------------------------------------------
-    # SIMPLE BIAS
+    # BIAS
     # -----------------------------------------------------
 
     print()
@@ -1097,7 +1051,7 @@ def print_results(
 
 
     # -----------------------------------------------------
-    # HORIZON RESULTS
+    # HORIZON
     # -----------------------------------------------------
 
     print()
@@ -1114,17 +1068,13 @@ def print_results(
     print()
 
     print(
-
         "Horizon | Samples | "
         "TimesFM | Bias | Ridge"
-
     )
 
 
     print(
-
         "--------+---------+---------+------+------"
-
     )
 
 
@@ -1205,6 +1155,191 @@ def save_metrics(
 
 
 # =========================================================
+# SAVE EXPERIMENT TO SUPABASE
+# =========================================================
+
+def save_experiment_to_supabase(
+    metrics,
+    horizon_results,
+    dataset_rows
+):
+
+    api_key = os.environ.get(
+        "SUPABASE_API_KEY"
+    )
+
+
+    if not api_key:
+
+        print(
+            "SUPABASE_API_KEY not available."
+        )
+
+        print(
+            "Experiment will not be saved "
+            "to Supabase."
+        )
+
+        return
+
+
+    url = (
+
+        f"{SUPABASE_URL}/rest/v1/"
+        f"{EXPERIMENT_TABLE}"
+
+    )
+
+
+    horizon_json = (
+
+        horizon_results
+
+        .replace(
+            {
+                np.nan: None
+            }
+        )
+
+        .to_dict(
+            orient="records"
+        )
+
+    )
+
+
+    github_sha = os.environ.get(
+        "GITHUB_SHA"
+    )
+
+
+    payload = {
+
+        "model_name":
+            "ridge_v4",
+
+        "git_sha":
+            github_sha,
+
+        "dataset_rows":
+            int(dataset_rows),
+
+        "test_samples":
+            int(
+                metrics["samples"]
+            ),
+
+        "test_forecast_runs":
+            int(
+                metrics["forecast_runs"]
+            ),
+
+        "timesfm_mae":
+            float(
+                metrics["timesfm"]["mae"]
+            ),
+
+        "timesfm_rmse":
+            float(
+                metrics["timesfm"]["rmse"]
+            ),
+
+        "timesfm_bias":
+            float(
+                metrics["timesfm"]["bias"]
+            ),
+
+        "bias_mae":
+            float(
+                metrics["bias_correction"]["mae"]
+            ),
+
+        "bias_rmse":
+            float(
+                metrics["bias_correction"]["rmse"]
+            ),
+
+        "bias_bias":
+            float(
+                metrics["bias_correction"]["bias"]
+            ),
+
+        "ridge_mae":
+            float(
+                metrics["personalized"]["mae"]
+            ),
+
+        "ridge_rmse":
+            float(
+                metrics["personalized"]["rmse"]
+            ),
+
+        "ridge_bias":
+            float(
+                metrics["personalized"]["bias"]
+            ),
+
+        "horizon_results":
+            horizon_json,
+
+    }
+
+
+    headers = {
+
+        "apikey":
+            api_key,
+
+        "Authorization":
+            f"Bearer {api_key}",
+
+        "Content-Type":
+            "application/json",
+
+        "Prefer":
+            "return=minimal",
+
+    }
+
+
+    response = requests.post(
+
+        url,
+
+        headers=headers,
+
+        json=payload,
+
+        timeout=30,
+
+    )
+
+
+    if not response.ok:
+
+        print(
+            "Failed to save experiment:"
+        )
+
+        print(
+            f"HTTP {response.status_code}"
+        )
+
+        print(
+            response.text
+        )
+
+        response.raise_for_status()
+
+
+    print()
+
+    print(
+        "Experiment saved to Supabase."
+    )
+
+
+# =========================================================
 # TRAIN FINAL MODEL
 # =========================================================
 
@@ -1241,7 +1376,6 @@ def train_final_model(
     model.fit(
 
         X,
-
         y
 
     )
@@ -1257,7 +1391,8 @@ def train_final_model(
 
 
     print(
-        f"Final model saved to {MODEL_FILE}"
+        f"Final model saved to "
+        f"{MODEL_FILE}"
     )
 
 
@@ -1284,7 +1419,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # WALK-FORWARD BACKTEST
+    # WALK-FORWARD
     # -----------------------------------------------------
 
     results = walk_forward_backtest(
@@ -1303,7 +1438,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # CALCULATE RESULTS
+    # METRICS
     # -----------------------------------------------------
 
     metrics = calculate_overall_results(
@@ -1330,7 +1465,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # SAVE
+    # SAVE LOCAL METRICS
     # -----------------------------------------------------
 
     save_metrics(
@@ -1343,11 +1478,23 @@ def main():
 
 
     # -----------------------------------------------------
+    # SAVE EXPERIMENT TO SUPABASE
+    # -----------------------------------------------------
+
+    save_experiment_to_supabase(
+
+        metrics,
+
+        horizon_results,
+
+        len(df)
+
+    )
+
+
+    # -----------------------------------------------------
     # TRAIN FINAL MODEL
     # -----------------------------------------------------
-    #
-    # This model is NOT yet connected to the live
-    # forecast. It is only stored for later use.
 
     train_final_model(
         df
@@ -1361,7 +1508,7 @@ def main():
     )
 
     print(
-        "Personalization v3 completed successfully."
+        "Personalization v4 completed successfully."
     )
 
     print(
