@@ -22,12 +22,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install requests pandas "timesfm[torch]"
-
       - name: Run Gluroo synchronization
         env:
           SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
         run: python script.py
-
+      
+      - name: Evaluate previous forecasts
+        env:
+          SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
+        run: python evaluate_forecasts.py
+      
       - name: Run TimesFM forecast
         env:
           SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
