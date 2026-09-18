@@ -639,9 +639,6 @@ def learn_horizon_weights(
 
         # -------------------------------------------------
         # Shrink toward global weight.
-        #
-        # This prevents extreme weights when there are
-        # only a few samples for a specific horizon.
         # -------------------------------------------------
 
         shrunk_weight = (
@@ -914,7 +911,7 @@ def walk_forward_backtest(df):
 
 
         # -------------------------------------------------
-        # Horizon one-hot features
+        # Horizon features
         # -------------------------------------------------
 
         train_df = add_horizon_features(
@@ -996,9 +993,6 @@ def walk_forward_backtest(df):
 
         # -------------------------------------------------
         # 2. Mean bias correction
-        #
-        # IMPORTANT:
-        # bias is calculated only from training data.
         # -------------------------------------------------
 
         train_bias = np.mean(
@@ -1067,7 +1061,7 @@ def walk_forward_backtest(df):
         # 4. Learn horizon weights
         #
         # IMPORTANT:
-        # weights are learned ONLY using train data.
+        # weights are learned ONLY from train data.
         # -------------------------------------------------
 
         train_predicted_correction = model.predict(
@@ -1089,7 +1083,7 @@ def walk_forward_backtest(df):
 
 
         # -------------------------------------------------
-        # Apply horizon-specific weighting
+        # Apply horizon weighting
         # -------------------------------------------------
 
         ridge_v5, used_weights = (
@@ -1525,6 +1519,7 @@ def print_results(
         f"{metrics['samples']}"
     )
 
+
     print(
         f"Test forecast runs: "
         f"{metrics['forecast_runs']}"
@@ -1545,6 +1540,7 @@ def print_results(
         "----------------"
     )
 
+
     print(
 
         f"MAE  : "
@@ -1552,12 +1548,14 @@ def print_results(
 
     )
 
+
     print(
 
         f"RMSE : "
         f"{metrics['timesfm']['rmse']:.3f} mmol/l"
 
     )
+
 
     print(
 
@@ -1568,7 +1566,7 @@ def print_results(
 
 
     # -----------------------------------------------------
-    # Bias correction
+    # Bias
     # -----------------------------------------------------
 
     print()
@@ -1581,6 +1579,7 @@ def print_results(
         "-------------------------------"
     )
 
+
     print(
 
         f"MAE  : "
@@ -1588,12 +1587,14 @@ def print_results(
 
     )
 
+
     print(
 
         f"RMSE : "
         f"{metrics['bias_correction']['rmse']:.3f} mmol/l"
 
     )
+
 
     print(
 
@@ -1617,6 +1618,7 @@ def print_results(
         "------------------"
     )
 
+
     print(
 
         f"MAE  : "
@@ -1624,12 +1626,14 @@ def print_results(
 
     )
 
+
     print(
 
         f"RMSE : "
         f"{metrics['ridge_v4']['rmse']:.3f} mmol/l"
 
     )
+
 
     print(
 
@@ -1653,6 +1657,7 @@ def print_results(
         "------------------------------------"
     )
 
+
     print(
 
         f"MAE  : "
@@ -1660,12 +1665,14 @@ def print_results(
 
     )
 
+
     print(
 
         f"RMSE : "
         f"{metrics['ridge_v5']['rmse']:.3f} mmol/l"
 
     )
+
 
     print(
 
@@ -1683,9 +1690,11 @@ def print_results(
         metrics["timesfm"]["mae"]
     )
 
+
     v4_mae = (
         metrics["ridge_v4"]["mae"]
     )
+
 
     v5_mae = (
         metrics["ridge_v5"]["mae"]
@@ -1740,12 +1749,14 @@ def print_results(
         "----------------------"
     )
 
+
     print(
 
         f"Ridge v4: "
         f"{v4_improvement:+.1f}%"
 
     )
+
 
     print(
 
@@ -1756,7 +1767,7 @@ def print_results(
 
 
     # -----------------------------------------------------
-    # Horizon results
+    # Horizon table
     # -----------------------------------------------------
 
     print()
@@ -1769,6 +1780,7 @@ def print_results(
         "------------------"
     )
 
+
     print()
 
     print(
@@ -1778,6 +1790,7 @@ def print_results(
         "Ridge v4 | Ridge v5"
 
     )
+
 
     print(
 
@@ -1953,11 +1966,43 @@ def save_experiment_to_supabase(
 
     # -----------------------------------------------------
     # Horizon weights
+    #
+    # IMPORTANT:
+    # pandas Timestamp must be converted to a string
+    # before sending the object to requests/json.
     # -----------------------------------------------------
+
+    weight_json = weight_results.copy()
+
+
+    if "forecast_created_at" in weight_json.columns:
+
+        weight_json[
+            "forecast_created_at"
+        ] = (
+
+            weight_json[
+                "forecast_created_at"
+            ]
+
+            .apply(
+
+                lambda x:
+
+                    x.isoformat()
+
+                    if pd.notna(x)
+
+                    else None
+
+            )
+
+        )
+
 
     weight_json = (
 
-        weight_results
+        weight_json
 
         .replace(
             {
@@ -1976,6 +2021,10 @@ def save_experiment_to_supabase(
         "GITHUB_SHA"
     )
 
+
+    # -----------------------------------------------------
+    # Payload
+    # -----------------------------------------------------
 
     payload = {
 
@@ -2070,6 +2119,10 @@ def save_experiment_to_supabase(
     }
 
 
+    # -----------------------------------------------------
+    # Supabase headers
+    # -----------------------------------------------------
+
     headers = {
 
         "apikey":
@@ -2086,6 +2139,10 @@ def save_experiment_to_supabase(
 
     }
 
+
+    # -----------------------------------------------------
+    # Send experiment
+    # -----------------------------------------------------
 
     response = requests.post(
 
@@ -2167,13 +2224,17 @@ def train_final_model(
 
 
     # -----------------------------------------------------
-    # Learn final horizon weights using all data.
+    # Predict corrections for all historical data.
     # -----------------------------------------------------
 
     train_predicted_correction = model.predict(
         X
     )
 
+
+    # -----------------------------------------------------
+    # Learn final horizon weights.
+    # -----------------------------------------------------
 
     weighting = learn_horizon_weights(
 
@@ -2185,7 +2246,7 @@ def train_final_model(
 
 
     # -----------------------------------------------------
-    # Store everything needed later for inference.
+    # Store complete model package.
     # -----------------------------------------------------
 
     model_package = {
@@ -2296,7 +2357,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # Clean and prepare
+    # Prepare dataset
     # -----------------------------------------------------
 
     df = prepare_data(
@@ -2330,7 +2391,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # Calculate overall metrics
+    # Overall metrics
     # -----------------------------------------------------
 
     metrics = calculate_overall_results(
@@ -2339,7 +2400,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # Calculate horizon metrics
+    # Horizon metrics
     # -----------------------------------------------------
 
     horizon_results = calculate_horizon_results(
@@ -2361,7 +2422,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # Save local metrics
+    # Save metrics locally
     # -----------------------------------------------------
 
     save_metrics(
@@ -2391,7 +2452,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # Train final model
+    # Train final V5 model
     # -----------------------------------------------------
 
     train_final_model(
@@ -2400,7 +2461,7 @@ def main():
 
 
     # -----------------------------------------------------
-    # Done
+    # Finished
     # -----------------------------------------------------
 
     print()
@@ -2419,7 +2480,7 @@ def main():
 
 
 # =========================================================
-# START PROGRAM
+# START
 # =========================================================
 
 if __name__ == "__main__":
