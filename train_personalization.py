@@ -255,43 +255,108 @@ def prepare_data(df):
 
 def split_data(df):
 
+    # =====================================================
+    # SPLIT BY FORECAST RUN
+    # =====================================================
+    #
+    # One TimesFM run creates many horizons:
+    #
+    # +5, +10, +15, ... +120 min
+    #
+    # All rows belonging to the same forecast run must
+    # stay together. Otherwise information from one
+    # forecast run could appear in both TRAIN and TEST.
+
+    forecast_runs = (
+
+        df[
+            "forecast_created_at"
+        ]
+
+        .drop_duplicates()
+
+        .sort_values()
+
+        .reset_index(drop=True)
+
+    )
+
+
+    if len(forecast_runs) < 5:
+
+        raise RuntimeError(
+
+            "Not enough independent forecast runs "
+            "for a reliable train/test split."
+
+        )
+
+
     split_index = int(
 
-        len(df) *
+        len(forecast_runs) *
         (1.0 - TEST_FRACTION)
 
     )
 
 
-    # Make sure both datasets contain data.
-
     split_index = max(
+
         1,
+
         min(
+
             split_index,
-            len(df) - 1
+
+            len(forecast_runs) - 1
+
         )
+
+    )
+
+
+    train_runs = set(
+
+        forecast_runs.iloc[
+            :split_index
+        ]
+
+    )
+
+
+    test_runs = set(
+
+        forecast_runs.iloc[
+            split_index:
+        ]
+
     )
 
 
     train_df = (
 
-        df.iloc[
-            :split_index
+        df[
+            df["forecast_created_at"]
+            .isin(train_runs)
         ]
 
         .copy()
+
+        .reset_index(drop=True)
 
     )
 
 
     test_df = (
 
-        df.iloc[
-            split_index:
+        df[
+            df["forecast_created_at"]
+            .isin(test_runs)
         ]
 
         .copy()
+
+        .reset_index(drop=True)
 
     )
 
@@ -303,7 +368,7 @@ def split_data(df):
     )
 
     print(
-        "CHRONOLOGICAL SPLIT"
+        "CHRONOLOGICAL FORECAST-RUN SPLIT"
     )
 
     print(
@@ -312,11 +377,34 @@ def split_data(df):
 
 
     print(
-        f"Training rows: {len(train_df)}"
+        f"Forecast runs total: "
+        f"{len(forecast_runs)}"
     )
 
+
     print(
-        f"Testing rows:  {len(test_df)}"
+        f"Training runs:       "
+        f"{len(train_runs)}"
+    )
+
+
+    print(
+        f"Testing runs:        "
+        f"{len(test_runs)}"
+    )
+
+
+    print()
+
+    print(
+        f"Training rows: "
+        f"{len(train_df)}"
+    )
+
+
+    print(
+        f"Testing rows:  "
+        f"{len(test_df)}"
     )
 
 
@@ -325,6 +413,7 @@ def split_data(df):
     print(
         "Training period:"
     )
+
 
     print(
 
@@ -343,6 +432,7 @@ def split_data(df):
         "Testing period:"
     )
 
+
     print(
 
         f"{test_df['forecast_created_at'].min()}"
@@ -355,8 +445,11 @@ def split_data(df):
 
 
     return (
+
         train_df,
+
         test_df
+
     )
 
 
