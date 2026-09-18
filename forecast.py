@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -16,21 +16,35 @@ FORECAST_TABLE = "glucose_forecasts"
 EVALUATION_TABLE = "glucose_forecast_evaluations"
 
 
-# Use a much longer context: 24 hours at 5-minute resolution.
+# =========================================================
+# TIMESFM SETTINGS
+# =========================================================
+
+# 24 hours of historical glucose data
 LOOKBACK_HOURS = 24
 
+# Glucose data are processed on a 5-minute grid
 INTERVAL = "5min"
 
-INPUT_POINTS = 288          # 24 h / 5 min
+# 24 h / 5 min = 288 points
+INPUT_POINTS = 288
 
-FORECAST_POINTS = 24        # 2 h / 5 min
+# 2 h / 5 min = 24 predictions
+FORECAST_POINTS = 24
 
+
+# =========================================================
+# SUPABASE
+# =========================================================
 
 def get_headers():
+
     key = os.environ.get("SUPABASE_API_KEY")
 
     if not key:
-        raise RuntimeError("SUPABASE_API_KEY is not set")
+        raise RuntimeError(
+            "SUPABASE_API_KEY is not set"
+        )
 
     return {
         "apikey": key,
@@ -39,27 +53,42 @@ def get_headers():
     }
 
 
+# =========================================================
+# LOAD GLUCOSE
+# =========================================================
+
 def fetch_glucose():
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
+
+    url = (
+        f"{SUPABASE_URL}/rest/v1/"
+        f"{TABLE_NAME}"
+    )
 
     params = {
-        "select": "dateString,sgv_mmol",
-        "order": "dateString.desc",
-        "limit": "10000",
+
+        "select":
+            "dateString,sgv_mmol",
+
+        "order":
+            "dateString.desc",
+
+        "limit":
+            "10000",
     }
 
-    r = requests.get(
+    response = requests.get(
         url,
         headers=get_headers(),
         params=params,
         timeout=30,
     )
 
-    r.raise_for_status()
+    response.raise_for_status()
 
-    rows = r.json()
+    rows = response.json()
 
     if not rows:
+
         raise RuntimeError(
             "No glucose data returned from Supabase"
         )
@@ -92,6 +121,10 @@ def fetch_glucose():
     return df
 
 
+# =========================================================
+# PREPARE TIMESFM INPUT
+# =========================================================
+
 def prepare_input(df):
 
     latest = df["dateString"].max()
@@ -108,12 +141,16 @@ def prepare_input(df):
     ].copy()
 
     if df.empty:
+
         raise RuntimeError(
-            "No glucose data in the requested lookback window"
+            "No glucose data in the requested "
+            "lookback window"
         )
 
-    # Put irregular CGM measurements
-    # onto a regular 5-minute grid.
+
+    # Convert irregular CGM measurements
+    # to a regular 5-minute grid.
+
     series = (
 
         df
@@ -126,13 +163,17 @@ def prepare_input(df):
 
     )
 
+
     if len(series) < INPUT_POINTS:
 
         print(
+
             f"Only {len(series)} regular "
             f"5-minute points are available. "
+
             f"TimesFM will use all available "
             f"points until 24 h is collected."
+
         )
 
         values = series.to_numpy(
@@ -142,17 +183,25 @@ def prepare_input(df):
     else:
 
         values = (
+
             series
             .iloc[-INPUT_POINTS:]
-            .to_numpy(dtype=np.float32)
+            .to_numpy(
+                dtype=np.float32
+            )
+
         )
+
 
     if len(values) < 8:
 
         raise RuntimeError(
+
             "Not enough current contiguous "
             f"data for forecasting: {len(values)} points"
+
         )
+
 
     last_grid_time = series.index[-1]
 
@@ -162,6 +211,10 @@ def prepare_input(df):
         len(series)
     )
 
+
+# =========================================================
+# RUN TIMESFM 3
+# =========================================================
 
 def run_timesfm(values):
 
@@ -176,9 +229,11 @@ def run_timesfm(values):
 
     )
 
+
     forecaster = TimesFM3Evaluator(
         config
     )
+
 
     outputs = list(
 
@@ -196,32 +251,32 @@ def run_timesfm(values):
 
     )
 
+
     out = outputs[0]
 
-    forecast = (
-        np.asarray(
-            out.forecast
-        )
-        .reshape(-1)
-    )
+
+    forecast = np.asarray(
+        out.forecast
+    ).reshape(-1)
+
 
     quantiles = np.asarray(
         out.quantiles
     )
 
-    # TimesFM 3.0 returns 9 quantiles:
-    # 0.1 ... 0.9.
-    #
-    # For a univariate series,
-    # shape is (horizon, 9).
+
+    # TimesFM 3 returns 9 quantiles:
+    # 0.1 ... 0.9
 
     if quantiles.ndim == 3:
 
         quantiles = quantiles[0]
 
+
     p10 = quantiles[:, 0]
 
     p90 = quantiles[:, 8]
+
 
     return (
         forecast,
@@ -229,6 +284,10 @@ def run_timesfm(values):
         p90
     )
 
+
+# =========================================================
+# SAVE FORECAST
+# =========================================================
 
 def save_forecast(
     last_grid_time,
@@ -240,17 +299,29 @@ def save_forecast(
     headers = get_headers()
 
 
+    # -----------------------------------------------------
+    # Time when this TimesFM run was created
+    # -----------------------------------------------------
+
+    forecast_created_at = (
+        datetime.now(
+            timezone.utc
+        ).isoformat()
+    )
+
+
     # =====================================================
-    # CURRENT PUBLIC FORECAST TABLE
+    # 1. UPDATE PUBLIC FORECAST TABLE
     # =====================================================
 
     # Keep only the newest forecast run
-    # in the public table.
+    # in glucose_forecasts.
 
     delete_url = (
         f"{SUPABASE_URL}/rest/v1/"
         f"{FORECAST_TABLE}"
     )
+
 
     delete_headers = dict(headers)
 
@@ -258,7 +329,8 @@ def save_forecast(
         "return=minimal"
     )
 
-    r = requests.delete(
+
+    response = requests.delete(
 
         delete_url,
 
@@ -272,35 +344,44 @@ def save_forecast(
 
     )
 
-    r.raise_for_status()
+
+    response.raise_for_status()
 
 
-    # =====================================================
-    # CREATE CURRENT FORECAST ROWS
-    # =====================================================
+    # -----------------------------------------------------
+    # Create rows for current dashboard
+    # -----------------------------------------------------
 
-    rows = []
+    forecast_rows = []
+
 
     for i, (pred, lo, hi) in enumerate(
+
         zip(
             forecast,
             p10,
             p90
         ),
+
         start=1
+
     ):
 
-        ts = (
+        forecast_time = (
+
             last_grid_time +
+
             timedelta(
                 minutes=5 * i
             )
+
         )
 
-        rows.append({
+
+        forecast_rows.append({
 
             "forecast_time":
-                ts.isoformat(),
+                forecast_time.isoformat(),
 
             "predicted_mmol":
                 float(pred),
@@ -314,14 +395,11 @@ def save_forecast(
         })
 
 
-    # =====================================================
-    # SAVE CURRENT FORECAST
-    # =====================================================
-
     post_url = (
         f"{SUPABASE_URL}/rest/v1/"
         f"{FORECAST_TABLE}"
     )
+
 
     post_headers = dict(headers)
 
@@ -329,45 +407,55 @@ def save_forecast(
         "return=minimal"
     )
 
-    r = requests.post(
+
+    response = requests.post(
 
         post_url,
 
         headers=post_headers,
 
-        json=rows,
+        json=forecast_rows,
 
         timeout=30,
 
     )
 
-    if r.status_code not in (200, 201):
+
+    if response.status_code not in (
+        200,
+        201
+    ):
 
         raise RuntimeError(
 
             "Forecast insert failed: "
-            f"HTTP {r.status_code} - "
-            f"{r.text}"
+            f"HTTP {response.status_code} - "
+            f"{response.text}"
 
         )
 
 
     # =====================================================
-    # SAVE PREDICTIONS FOR FUTURE EVALUATION
+    # 2. SAVE HISTORICAL EVALUATION ROWS
     # =====================================================
 
-    evaluation_created_at = (
-        datetime.now(timezone.utc)
-        .isoformat()
-    )
-
+    # These rows are NEVER deleted.
+    #
+    # Later evaluate_forecasts.py will fill:
+    #
+    # actual_mmol
+    # error_mmol
+    # absolute_error_mmol
 
     evaluation_rows = []
 
 
     for i, pred in enumerate(
+
         forecast,
+
         start=1
+
     ):
 
         forecast_time = (
@@ -384,43 +472,27 @@ def save_forecast(
         evaluation_rows.append({
 
             "forecast_created_at":
-                evaluation_created_at,
+                forecast_created_at,
 
             "forecast_time":
                 forecast_time.isoformat(),
 
             "horizon_minutes":
-                5 * i,
+                i * 5,
 
             "predicted_mmol":
                 float(pred),
 
-            # These are intentionally NULL.
-            #
-            # They will be filled later when
-            # the corresponding real glucose
-            # measurement becomes available.
-
-            "actual_mmol":
-                None,
-
-            "error_mmol":
-                None,
-
-            "absolute_error_mmol":
-                None,
-
         })
 
 
-    # =====================================================
-    # INSERT EVALUATION DATA
-    # =====================================================
-
     evaluation_url = (
+
         f"{SUPABASE_URL}/rest/v1/"
         f"{EVALUATION_TABLE}"
+
     )
+
 
     evaluation_headers = dict(headers)
 
@@ -429,7 +501,7 @@ def save_forecast(
     )
 
 
-    r = requests.post(
+    response = requests.post(
 
         evaluation_url,
 
@@ -442,32 +514,39 @@ def save_forecast(
     )
 
 
-    if r.status_code not in (200, 201):
+    if response.status_code not in (
+        200,
+        201
+    ):
 
         raise RuntimeError(
 
             "Evaluation insert failed: "
-            f"HTTP {r.status_code} - "
-            f"{r.text}"
+            f"HTTP {response.status_code} - "
+            f"{response.text}"
 
         )
 
 
-    return len(rows)
+    return len(forecast_rows)
 
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
 
-    # =====================================================
-    # LOAD GLUCOSE DATA
-    # =====================================================
+    # -----------------------------------------------------
+    # Load glucose
+    # -----------------------------------------------------
 
     df = fetch_glucose()
 
 
-    # =====================================================
-    # PREPARE TIMESFM INPUT
-    # =====================================================
+    # -----------------------------------------------------
+    # Prepare TimesFM input
+    # -----------------------------------------------------
 
     (
         values,
@@ -481,15 +560,18 @@ def main():
         f"{df['dateString'].max().isoformat()}"
     )
 
+
     print(
         "Regular 5-minute points available: "
         f"{regular_points}"
     )
 
+
     print(
         "TimesFM context points used: "
         f"{len(values)}"
     )
+
 
     print(
         "Forecast horizon: "
@@ -497,18 +579,20 @@ def main():
     )
 
 
-    # =====================================================
-    # RUN TIMESFM
-    # =====================================================
+    # -----------------------------------------------------
+    # TimesFM
+    # -----------------------------------------------------
 
-    forecast, p10, p90 = run_timesfm(
-        values
-    )
+    (
+        forecast,
+        p10,
+        p90
+    ) = run_timesfm(values)
 
 
-    # =====================================================
-    # SAVE FORECAST + EVALUATION DATA
-    # =====================================================
+    # -----------------------------------------------------
+    # Save forecast + evaluation dataset
+    # -----------------------------------------------------
 
     saved = save_forecast(
 
@@ -523,14 +607,14 @@ def main():
     )
 
 
-    # =====================================================
-    # OUTPUT
-    # =====================================================
-
     print(
         "FORECAST OK"
     )
 
+
+    # -----------------------------------------------------
+    # Print predictions
+    # -----------------------------------------------------
 
     for i, (pred, lo, hi) in enumerate(
 
@@ -544,7 +628,7 @@ def main():
 
     ):
 
-        ts = (
+        forecast_time = (
 
             last_grid_time +
 
@@ -557,9 +641,12 @@ def main():
 
         print(
 
-            f"{ts.isoformat()} | "
+            f"{forecast_time.isoformat()} | "
+
             f"median={pred:.3f} | "
+
             f"P10={lo:.3f} | "
+
             f"P90={hi:.3f}"
 
         )
@@ -570,11 +657,17 @@ def main():
         "to Supabase."
     )
 
+
     print(
-        "Saved forecast evaluation "
-        "data for future accuracy tracking."
+        f"Saved {saved} evaluation rows "
+        "to Supabase."
     )
 
 
+# =========================================================
+# START
+# =========================================================
+
 if __name__ == "__main__":
+
     main()
