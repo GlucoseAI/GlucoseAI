@@ -97,6 +97,20 @@ jobs:
         run:
 
           python analyze_forecasts.py
+      # =================================================
+      # BUILD PERSONALIZATION DATASET
+      # =================================================
+
+      - name: Build personalization dataset
+
+        env:
+
+          SUPABASE_API_KEY:
+            ${{ secrets.SUPABASE_API_KEY }}
+
+        run:
+
+          python build_personalization_dataset.py
 
 
       # =================================================
