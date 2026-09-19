@@ -121,6 +121,11 @@ jobs:
         env:
           SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
         run: python train_personalization_v5.py
+            
+      - name: Train personalization V6
+        env:
+          SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
+        run: python train_personalization_v6.py
 
       # =================================================
       # TIMESFM FORECAST
