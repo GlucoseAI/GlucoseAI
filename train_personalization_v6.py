@@ -18,25 +18,22 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 DATASET_FILE = "personalization_dataset.csv"
 
-MODEL_FILE = "personalization_model_v6.joblib"
-METRICS_FILE = "personalization_metrics_v6.json"
+MODEL_FILE = "personalization_model_v6_1.joblib"
+METRICS_FILE = "personalization_metrics_v6_1.json"
 
 SUPABASE_URL = "https://tpzwxutiveixprniptyh.supabase.co"
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 
 EXPERIMENTS_TABLE = "personalization_experiments"
 
-MIN_TRAIN_RUNS = 3
+MODEL_NAME = "ridge_v6_1_alpha100"
 
-ALPHA_VALUES = [
-    0.1,
-    0.3,
-    1.0,
-    3.0,
-    10.0,
-    30.0,
-    100.0,
-]
+# Alpha selected from the previous V6 experiment.
+# It is now FIXED and will not be selected from future
+# test data.
+RIDGE_ALPHA = 100.0
+
+MIN_TRAIN_RUNS = 3
 
 HORIZONS = list(range(5, 121, 5))
 
@@ -65,35 +62,9 @@ TARGET_COLUMN = "correction_target"
 # ============================================================
 
 def rmse(y_true, y_pred):
-    return math.sqrt(mean_squared_error(y_true, y_pred))
-
-
-def make_feature_matrix(df):
-    """
-    Create the same feature representation for every model.
-
-    Base numerical features + one-hot horizon features.
-    """
-
-    X = df[BASE_FEATURE_COLUMNS].copy()
-
-    for horizon in HORIZONS:
-        X[f"horizon_{horizon}"] = (
-            df["horizon_minutes"].astype(int) == horizon
-        ).astype(float)
-
-    return X
-
-
-def create_model(alpha):
-    """
-    Ridge regression with standardized features.
-    """
-
-    return Pipeline([
-        ("scaler", StandardScaler()),
-        ("ridge", Ridge(alpha=alpha))
-    ])
+    return math.sqrt(
+        mean_squared_error(y_true, y_pred)
+    )
 
 
 def calculate_metrics(y_true, y_pred):
@@ -103,29 +74,79 @@ def calculate_metrics(y_true, y_pred):
     errors = y_pred - y_true
 
     return {
-        "mae": float(mean_absolute_error(y_true, y_pred)),
-        "rmse": float(rmse(y_true, y_pred)),
-        "bias": float(np.mean(errors)),
+        "mae": float(
+            mean_absolute_error(y_true, y_pred)
+        ),
+        "rmse": float(
+            rmse(y_true, y_pred)
+        ),
+        "bias": float(
+            np.mean(errors)
+        ),
     }
 
 
-def calculate_bias_model(train_df):
+def make_feature_matrix(df):
+    """
+    Create the feature matrix.
+
+    Numerical glucose-history features +
+    TimesFM prediction +
+    time-of-day +
+    one-hot horizon features.
+    """
+
+    X = df[BASE_FEATURE_COLUMNS].copy()
+
+    for horizon in HORIZONS:
+        X[f"horizon_{horizon}"] = (
+            df["horizon_minutes"].astype(int)
+            == horizon
+        ).astype(float)
+
+    return X
+
+
+def create_model():
+    """
+    V6.1 model.
+
+    Alpha is intentionally fixed at 100.
+    """
+
+    return Pipeline([
+        (
+            "scaler",
+            StandardScaler()
+        ),
+        (
+            "ridge",
+            Ridge(alpha=RIDGE_ALPHA)
+        ),
+    ])
+
+
+def calculate_training_bias(train_df):
     """
     Mean correction calculated ONLY from training data.
+
+    correction_target =
+        actual_glucose - timesfm_prediction
     """
 
-    return float(train_df[TARGET_COLUMN].mean())
-
-
-def apply_bias_model(df, bias):
-    return df["timesfm_prediction"].to_numpy() + bias
+    return float(
+        train_df[TARGET_COLUMN].mean()
+    )
 
 
 def safe_float(value):
     if value is None:
         return None
 
-    if isinstance(value, (np.floating, np.integer)):
+    if isinstance(
+        value,
+        (np.floating, np.integer)
+    ):
         return float(value)
 
     if isinstance(value, float):
@@ -141,9 +162,18 @@ def safe_float(value):
 
 print("Loading personalization dataset...")
 
-df = pd.read_csv(DATASET_FILE)
+df = pd.read_csv(
+    DATASET_FILE
+)
 
-print(f"Loaded {len(df)} rows.")
+print(
+    f"Loaded {len(df)} rows."
+)
+
+
+# ============================================================
+# REQUIRED COLUMNS
+# ============================================================
 
 required_columns = (
     BASE_FEATURE_COLUMNS
@@ -157,11 +187,13 @@ required_columns = (
 )
 
 missing_columns = [
-    col for col in required_columns
-    if col not in df.columns
+    column
+    for column in required_columns
+    if column not in df.columns
 ]
 
 if missing_columns:
+
     raise RuntimeError(
         "Missing required columns:\n"
         + "\n".join(missing_columns)
@@ -169,10 +201,12 @@ if missing_columns:
 
 
 # ============================================================
-# CLEANING
+# CLEAN DATA
 # ============================================================
 
-print(f"Rows before cleaning: {len(df)}")
+print(
+    f"Rows before cleaning: {len(df)}"
+)
 
 df["forecast_created_at"] = pd.to_datetime(
     df["forecast_created_at"],
@@ -190,6 +224,7 @@ numeric_columns = (
 )
 
 for column in numeric_columns:
+
     df[column] = pd.to_numeric(
         df[column],
         errors="coerce",
@@ -203,11 +238,13 @@ df = df.sort_values(
     "forecast_created_at"
 ).reset_index(drop=True)
 
-print(f"Rows after cleaning:  {len(df)}")
+print(
+    f"Rows after cleaning:  {len(df)}"
+)
 
 
 # ============================================================
-# GROUP INTO FORECAST RUNS
+# FORECAST RUNS
 # ============================================================
 
 run_times = (
@@ -218,15 +255,31 @@ run_times = (
 )
 
 print()
-print("==========================================================")
-print("DATASET INFORMATION")
-print("==========================================================")
-print(f"Rows:          {len(df)}")
-print(f"Forecast runs: {len(run_times)}")
-print()
+print(
+    "=========================================================="
+)
+print(
+    "DATASET INFORMATION"
+)
+print(
+    "=========================================================="
+)
+
+print(
+    f"Rows:          {len(df)}"
+)
+
+print(
+    f"Forecast runs: {len(run_times)}"
+)
+
+print(
+    f"Fixed Ridge alpha: {RIDGE_ALPHA}"
+)
 
 
 if len(run_times) <= MIN_TRAIN_RUNS:
+
     raise RuntimeError(
         f"Not enough forecast runs. "
         f"Need more than {MIN_TRAIN_RUNS}, "
@@ -235,305 +288,235 @@ if len(run_times) <= MIN_TRAIN_RUNS:
 
 
 # ============================================================
-# ALPHA SEARCH
+# WALK-FORWARD BACKTEST
 # ============================================================
 
-print("==========================================================")
-print("RIDGE ALPHA SEARCH")
-print("==========================================================")
 print()
-print("Candidate alpha values:")
-print(ALPHA_VALUES)
+print(
+    "=========================================================="
+)
+print(
+    "WALK-FORWARD BACKTEST - V6.1"
+)
+print(
+    "=========================================================="
+)
+
+print()
+print(
+    "Ridge alpha is fixed at 100.0."
+)
+
+print(
+    "No alpha selection is performed."
+)
+
 print()
 
 
-# ============================================================
-# INNER WALK-FORWARD ALPHA SELECTION
-# ============================================================
+# ------------------------------------------------------------
+# Storage
+# ------------------------------------------------------------
 
-def select_alpha_inner(train_df):
-    """
-    Select alpha using ONLY data available before the outer
-    test run.
+timesfm_actuals = []
+timesfm_predictions = []
 
-    This prevents the outer test data from influencing alpha.
+bias_actuals = []
+bias_predictions = []
 
-    For a given outer training set:
-
-        run 1 + run 2 -> validate run 3
-        run 1 + run 2 + run 3 -> validate run 4
-        ...
-
-    If there is not enough data for an inner validation,
-    alpha=1.0 is used as a conservative fallback.
-    """
-
-    inner_runs = (
-        train_df["forecast_created_at"]
-        .drop_duplicates()
-        .sort_values()
-        .tolist()
-    )
-
-    if len(inner_runs) < 4:
-        return 1.0
-
-    alpha_scores = {}
-
-    for alpha in ALPHA_VALUES:
-
-        validation_true = []
-        validation_pred = []
-
-        # Start with at least 3 training runs.
-        for inner_index in range(3, len(inner_runs)):
-
-            inner_train_runs = inner_runs[:inner_index]
-            inner_validation_run = inner_runs[inner_index]
-
-            inner_train = train_df[
-                train_df["forecast_created_at"].isin(
-                    inner_train_runs
-                )
-            ]
-
-            inner_validation = train_df[
-                train_df["forecast_created_at"]
-                == inner_validation_run
-            ]
-
-            if len(inner_train) == 0:
-                continue
-
-            if len(inner_validation) == 0:
-                continue
-
-            model = create_model(alpha)
-
-            X_train = make_feature_matrix(inner_train)
-            y_train = inner_train[TARGET_COLUMN].to_numpy()
-
-            X_val = make_feature_matrix(inner_validation)
-
-            model.fit(
-                X_train,
-                y_train,
-            )
-
-            prediction = model.predict(X_val)
-
-            validation_true.extend(
-                inner_validation[TARGET_COLUMN].to_numpy()
-            )
-
-            validation_pred.extend(prediction)
-
-        if len(validation_true) == 0:
-            alpha_scores[alpha] = float("inf")
-        else:
-            alpha_scores[alpha] = mean_absolute_error(
-                validation_true,
-                validation_pred,
-            )
-
-    best_alpha = min(
-        alpha_scores,
-        key=alpha_scores.get
-    )
-
-    return float(best_alpha)
-
-
-# ============================================================
-# OUTER WALK-FORWARD BACKTEST
-# ============================================================
-
-print("==========================================================")
-print("NESTED WALK-FORWARD BACKTEST - V6")
-print("==========================================================")
+ridge_actuals = []
+ridge_predictions = []
 
 outer_results = []
 
-all_predictions = {
-    alpha: {
-        "y_true": [],
-        "y_pred": [],
-    }
-    for alpha in ALPHA_VALUES
-}
 
-bias_predictions = []
-bias_actuals = []
+# ============================================================
+# OUTER WALK-FORWARD
+# ============================================================
 
-timesfm_predictions = []
-timesfm_actuals = []
+for test_index in range(
+    MIN_TRAIN_RUNS,
+    len(run_times)
+):
 
-selected_alpha_history = []
+    train_runs = run_times[
+        :test_index
+    ]
 
-
-for test_index in range(MIN_TRAIN_RUNS, len(run_times)):
-
-    train_runs = run_times[:test_index]
-    test_run = run_times[test_index]
+    test_run = run_times[
+        test_index
+    ]
 
     train_df = df[
-        df["forecast_created_at"].isin(train_runs)
+        df["forecast_created_at"].isin(
+            train_runs
+        )
     ].copy()
 
     test_df = df[
-        df["forecast_created_at"] == test_run
+        df["forecast_created_at"]
+        == test_run
     ].copy()
 
-    if len(train_df) == 0 or len(test_df) == 0:
+    if (
+        len(train_df) == 0
+        or len(test_df) == 0
+    ):
         continue
 
-    # --------------------------------------------------------
-    # Select alpha using ONLY previous training runs.
-    # --------------------------------------------------------
+    # ========================================================
+    # TIMESFM BASELINE
+    # ========================================================
 
-    selected_alpha = select_alpha_inner(train_df)
+    actual = (
+        test_df["actual_glucose"]
+        .to_numpy()
+    )
 
-    selected_alpha_history.append({
-        "test_run": test_run.isoformat(),
-        "selected_alpha": selected_alpha,
-    })
-
-    # --------------------------------------------------------
-    # TimesFM baseline
-    # --------------------------------------------------------
+    timesfm = (
+        test_df["timesfm_prediction"]
+        .to_numpy()
+    )
 
     timesfm_actuals.extend(
-        test_df["actual_glucose"].to_numpy()
+        actual
     )
 
     timesfm_predictions.extend(
-        test_df["timesfm_prediction"].to_numpy()
+        timesfm
     )
 
-    # --------------------------------------------------------
-    # Mean bias correction
-    # --------------------------------------------------------
+    # ========================================================
+    # MEAN BIAS CORRECTION
+    # ========================================================
 
-    train_bias = calculate_bias_model(train_df)
+    train_bias = calculate_training_bias(
+        train_df
+    )
 
-    bias_pred = apply_bias_model(
-        test_df,
-        train_bias
+    bias_prediction = (
+        timesfm
+        + train_bias
     )
 
     bias_actuals.extend(
-        test_df[TARGET_COLUMN].to_numpy()
+        actual
     )
 
     bias_predictions.extend(
-        bias_pred - test_df["timesfm_prediction"].to_numpy()
-        + test_df[TARGET_COLUMN].to_numpy()
+        bias_prediction
     )
 
-    # The expression above reconstructs corrected glucose:
-    # TimesFM prediction + learned correction.
-    #
-    # Since TARGET = actual - TimesFM,
-    # this is:
-    #
-    # TimesFM + train_bias
+    # ========================================================
+    # RIDGE V6.1
+    # ========================================================
 
-    bias_predictions[-len(test_df):] = (
-        test_df["timesfm_prediction"].to_numpy()
-        + train_bias
-    ).tolist()
+    model = create_model()
 
-    # --------------------------------------------------------
-    # Test every alpha independently
-    # --------------------------------------------------------
+    X_train = make_feature_matrix(
+        train_df
+    )
 
-    for alpha in ALPHA_VALUES:
+    y_train = (
+        train_df[TARGET_COLUMN]
+        .to_numpy()
+    )
 
-        model = create_model(alpha)
+    X_test = make_feature_matrix(
+        test_df
+    )
 
-        X_train = make_feature_matrix(train_df)
-        y_train = train_df[TARGET_COLUMN].to_numpy()
-
-        X_test = make_feature_matrix(test_df)
-
-        model.fit(
-            X_train,
-            y_train,
-        )
-
-        correction = model.predict(X_test)
-
-        prediction = (
-            test_df["timesfm_prediction"].to_numpy()
-            + correction
-        )
-
-        all_predictions[alpha]["y_true"].extend(
-            test_df["actual_glucose"].to_numpy()
-        )
-
-        all_predictions[alpha]["y_pred"].extend(
-            prediction
-        )
-
-    # --------------------------------------------------------
-    # Selected alpha model
-    # --------------------------------------------------------
-
-    selected_model = create_model(selected_alpha)
-
-    X_train = make_feature_matrix(train_df)
-    y_train = train_df[TARGET_COLUMN].to_numpy()
-
-    X_test = make_feature_matrix(test_df)
-
-    selected_model.fit(
+    model.fit(
         X_train,
-        y_train,
+        y_train
     )
 
-    selected_correction = selected_model.predict(
+    correction = model.predict(
         X_test
     )
 
-    selected_prediction = (
-        test_df["timesfm_prediction"].to_numpy()
-        + selected_correction
+    ridge_prediction = (
+        timesfm
+        + correction
     )
 
-    # --------------------------------------------------------
-    # Run metrics
-    # --------------------------------------------------------
+    ridge_actuals.extend(
+        actual
+    )
+
+    ridge_predictions.extend(
+        ridge_prediction
+    )
+
+    # ========================================================
+    # RUN METRICS
+    # ========================================================
 
     run_timesfm = calculate_metrics(
-        test_df["actual_glucose"],
-        test_df["timesfm_prediction"],
+        actual,
+        timesfm
     )
 
-    run_selected = calculate_metrics(
-        test_df["actual_glucose"],
-        selected_prediction,
+    run_bias = calculate_metrics(
+        actual,
+        bias_prediction
+    )
+
+    run_ridge = calculate_metrics(
+        actual,
+        ridge_prediction
     )
 
     print(
-        f"Test run {test_index + 1}/{len(run_times)} | "
+        f"Test run "
+        f"{test_index + 1}/{len(run_times)} | "
         f"{test_run} | "
         f"n={len(test_df)} | "
-        f"alpha={selected_alpha} | "
-        f"TimesFM MAE={run_timesfm['mae']:.3f} | "
-        f"V6 MAE={run_selected['mae']:.3f}"
+        f"TimesFM MAE="
+        f"{run_timesfm['mae']:.3f} | "
+        f"Bias MAE="
+        f"{run_bias['mae']:.3f} | "
+        f"V6.1 MAE="
+        f"{run_ridge['mae']:.3f}"
     )
 
     outer_results.append({
-        "test_run": test_run.isoformat(),
-        "samples": int(len(test_df)),
-        "selected_alpha": selected_alpha,
-        "timesfm_mae": run_timesfm["mae"],
-        "timesfm_rmse": run_timesfm["rmse"],
-        "timesfm_bias": run_timesfm["bias"],
-        "v6_mae": run_selected["mae"],
-        "v6_rmse": run_selected["rmse"],
-        "v6_bias": run_selected["bias"],
+
+        "test_run":
+            test_run.isoformat(),
+
+        "samples":
+            int(len(test_df)),
+
+        "ridge_alpha":
+            RIDGE_ALPHA,
+
+        "timesfm_mae":
+            run_timesfm["mae"],
+
+        "timesfm_rmse":
+            run_timesfm["rmse"],
+
+        "timesfm_bias":
+            run_timesfm["bias"],
+
+        "bias_mae":
+            run_bias["mae"],
+
+        "bias_rmse":
+            run_bias["rmse"],
+
+        "bias_bias":
+            run_bias["bias"],
+
+        "v6_1_mae":
+            run_ridge["mae"],
+
+        "v6_1_rmse":
+            run_ridge["rmse"],
+
+        "v6_1_bias":
+            run_ridge["bias"],
     })
 
 
@@ -541,161 +524,199 @@ for test_index in range(MIN_TRAIN_RUNS, len(run_times)):
 # GLOBAL METRICS
 # ============================================================
 
-print()
-print("==========================================================")
-print("GLOBAL RESULTS - V6")
-print("==========================================================")
-
 timesfm_metrics = calculate_metrics(
     timesfm_actuals,
-    timesfm_predictions,
+    timesfm_predictions
 )
 
 bias_metrics = calculate_metrics(
     bias_actuals,
-    bias_predictions,
+    bias_predictions
 )
 
-alpha_metrics = {}
-
-for alpha in ALPHA_VALUES:
-
-    metrics = calculate_metrics(
-        all_predictions[alpha]["y_true"],
-        all_predictions[alpha]["y_pred"],
-    )
-
-    alpha_metrics[str(alpha)] = metrics
-
-
-# Selected alpha OOF results
-
-selected_actuals = []
-selected_predictions = []
-
-for result in outer_results:
-
-    test_run = result["test_run"]
-
-    test_df = df[
-        df["forecast_created_at"].astype(str)
-        == test_run
-    ]
-
-    if len(test_df) == 0:
-        continue
-
-    # We cannot reconstruct selected predictions here,
-    # so use the stored per-run metrics for summary below.
-
-
-# ============================================================
-# OOF SELECTED MODEL METRICS
-# ============================================================
-
-# Re-run selected outer predictions so that we have the
-# complete prediction vector for MAE/RMSE/bias.
-
-selected_actuals = []
-selected_predictions = []
-
-for test_index in range(MIN_TRAIN_RUNS, len(run_times)):
-
-    train_runs = run_times[:test_index]
-    test_run = run_times[test_index]
-
-    train_df = df[
-        df["forecast_created_at"].isin(train_runs)
-    ].copy()
-
-    test_df = df[
-        df["forecast_created_at"] == test_run
-    ].copy()
-
-    if len(train_df) == 0 or len(test_df) == 0:
-        continue
-
-    selected_alpha = select_alpha_inner(train_df)
-
-    model = create_model(selected_alpha)
-
-    X_train = make_feature_matrix(train_df)
-    y_train = train_df[TARGET_COLUMN].to_numpy()
-
-    X_test = make_feature_matrix(test_df)
-
-    model.fit(
-        X_train,
-        y_train,
-    )
-
-    correction = model.predict(X_test)
-
-    prediction = (
-        test_df["timesfm_prediction"].to_numpy()
-        + correction
-    )
-
-    selected_actuals.extend(
-        test_df["actual_glucose"].to_numpy()
-    )
-
-    selected_predictions.extend(
-        prediction
-    )
-
-
-v6_metrics = calculate_metrics(
-    selected_actuals,
-    selected_predictions,
+ridge_metrics = calculate_metrics(
+    ridge_actuals,
+    ridge_predictions
 )
 
 
 # ============================================================
-# PRINT ALPHA COMPARISON
+# HORIZON METRICS
 # ============================================================
-
-print()
-print("==========================================================")
-print("ALPHA COMPARISON")
-print("==========================================================")
 
 print()
 print(
-    f"{'Alpha':>10} | "
-    f"{'MAE':>10} | "
-    f"{'RMSE':>10} | "
-    f"{'Bias':>10}"
+    "=========================================================="
+)
+print(
+    "RESULTS BY HORIZON"
+)
+print(
+    "=========================================================="
 )
 
-print("-" * 50)
+print()
+print(
+    "Horizon | Samples | TimesFM | Bias | V6.1"
+)
+print(
+    "--------+---------+---------+------+------"
+)
 
-for alpha in ALPHA_VALUES:
+horizon_results = {}
 
-    metrics = alpha_metrics[str(alpha)]
+for horizon in HORIZONS:
 
-    print(
-        f"{alpha:>10} | "
-        f"{metrics['mae']:>10.3f} | "
-        f"{metrics['rmse']:>10.3f} | "
-        f"{metrics['bias']:>+10.3f}"
+    horizon_df = df[
+        df["horizon_minutes"]
+        == horizon
+    ]
+
+    if len(horizon_df) == 0:
+        continue
+
+    # Only calculate using rows that belong to
+    # outer walk-forward test data.
+
+    horizon_times = []
+    horizon_actual = []
+    horizon_ridge = []
+    horizon_bias = []
+
+    for result in outer_results:
+
+        test_run = result["test_run"]
+
+        test_run_timestamp = pd.Timestamp(
+            test_run
+        )
+
+        test_rows = horizon_df[
+            horizon_df[
+                "forecast_created_at"
+            ]
+            == test_run_timestamp
+        ]
+
+        if len(test_rows) == 0:
+            continue
+
+        train_runs = [
+            run
+            for run in run_times
+            if run < test_run_timestamp
+        ]
+
+        if len(train_runs) < MIN_TRAIN_RUNS:
+            continue
+
+        train_df = df[
+            df["forecast_created_at"].isin(
+                train_runs
+            )
+        ].copy()
+
+        model = create_model()
+
+        model.fit(
+            make_feature_matrix(
+                train_df
+            ),
+            train_df[
+                TARGET_COLUMN
+            ].to_numpy()
+        )
+
+        correction = model.predict(
+            make_feature_matrix(
+                test_rows
+            )
+        )
+
+        actual_values = (
+            test_rows[
+                "actual_glucose"
+            ].to_numpy()
+        )
+
+        timesfm_values = (
+            test_rows[
+                "timesfm_prediction"
+            ].to_numpy()
+        )
+
+        train_bias = calculate_training_bias(
+            train_df
+        )
+
+        bias_values = (
+            timesfm_values
+            + train_bias
+        )
+
+        ridge_values = (
+            timesfm_values
+            + correction
+        )
+
+        horizon_actual.extend(
+            actual_values
+        )
+
+        horizon_times.extend(
+            timesfm_values
+        )
+
+        horizon_bias.extend(
+            bias_values
+        )
+
+        horizon_ridge.extend(
+            ridge_values
+        )
+
+    if len(horizon_actual) == 0:
+        continue
+
+    h_timesfm = calculate_metrics(
+        horizon_actual,
+        horizon_times
     )
 
+    h_bias = calculate_metrics(
+        horizon_actual,
+        horizon_bias
+    )
 
-# Best alpha based on OOF diagnostic.
-#
-# IMPORTANT:
-# This is useful for comparison, but the selected V6 model
-# uses nested walk-forward alpha selection above.
+    h_ridge = calculate_metrics(
+        horizon_actual,
+        horizon_ridge
+    )
 
-best_diagnostic_alpha = min(
-    ALPHA_VALUES,
-    key=lambda a: alpha_metrics[str(a)]["mae"]
-)
+    horizon_results[
+        str(horizon)
+    ] = {
 
-best_diagnostic_metrics = alpha_metrics[
-    str(best_diagnostic_alpha)
-]
+        "samples":
+            int(len(horizon_actual)),
+
+        "timesfm":
+            h_timesfm,
+
+        "bias":
+            h_bias,
+
+        "v6_1":
+            h_ridge,
+    }
+
+    print(
+        f"{horizon:7d} | "
+        f"{len(horizon_actual):7d} | "
+        f"{h_timesfm['mae']:7.3f} | "
+        f"{h_bias['mae']:4.3f} | "
+        f"{h_ridge['mae']:4.3f}"
+    )
 
 
 # ============================================================
@@ -703,149 +724,158 @@ best_diagnostic_metrics = alpha_metrics[
 # ============================================================
 
 print()
-print("==========================================================")
-print("WALK-FORWARD RESULTS - V6")
-print("==========================================================")
-
-print()
-print("TIMESFM BASELINE")
-print("----------------")
 print(
-    f"MAE  : {timesfm_metrics['mae']:.3f} mmol/l"
+    "=========================================================="
 )
 print(
-    f"RMSE : {timesfm_metrics['rmse']:.3f} mmol/l"
+    "WALK-FORWARD RESULTS - V6.1"
 )
 print(
-    f"Bias : {timesfm_metrics['bias']:+.3f} mmol/l"
+    "=========================================================="
 )
 
 print()
-print("TIMESFM + MEAN BIAS CORRECTION")
-print("-------------------------------")
 print(
-    f"MAE  : {bias_metrics['mae']:.3f} mmol/l"
+    "TIMESFM BASELINE"
 )
 print(
-    f"RMSE : {bias_metrics['rmse']:.3f} mmol/l"
-)
-print(
-    f"Bias : {bias_metrics['bias']:+.3f} mmol/l"
+    "----------------"
 )
 
-print()
-print("BEST FIXED RIDGE ALPHA - DIAGNOSTIC")
-print("------------------------------------")
 print(
-    f"Alpha: {best_diagnostic_alpha}"
-)
-print(
-    f"MAE  : {best_diagnostic_metrics['mae']:.3f} mmol/l"
-)
-print(
-    f"RMSE : {best_diagnostic_metrics['rmse']:.3f} mmol/l"
-)
-print(
-    f"Bias : {best_diagnostic_metrics['bias']:+.3f} mmol/l"
+    f"MAE  : "
+    f"{timesfm_metrics['mae']:.3f} mmol/l"
 )
 
+print(
+    f"RMSE : "
+    f"{timesfm_metrics['rmse']:.3f} mmol/l"
+)
+
+print(
+    f"Bias : "
+    f"{timesfm_metrics['bias']:+.3f} mmol/l"
+)
+
+
 print()
-print("V6 NESTED WALK-FORWARD")
-print("-----------------------")
 print(
-    f"MAE  : {v6_metrics['mae']:.3f} mmol/l"
+    "TIMESFM + MEAN BIAS CORRECTION"
 )
 print(
-    f"RMSE : {v6_metrics['rmse']:.3f} mmol/l"
+    "-------------------------------"
+)
+
+print(
+    f"MAE  : "
+    f"{bias_metrics['mae']:.3f} mmol/l"
+)
+
+print(
+    f"RMSE : "
+    f"{bias_metrics['rmse']:.3f} mmol/l"
+)
+
+print(
+    f"Bias : "
+    f"{bias_metrics['bias']:+.3f} mmol/l"
+)
+
+
+print()
+print(
+    "TIMESFM + RIDGE V6.1"
 )
 print(
-    f"Bias : {v6_metrics['bias']:+.3f} mmol/l"
+    "--------------------"
+)
+
+print(
+    f"Alpha: "
+    f"{RIDGE_ALPHA}"
+)
+
+print(
+    f"MAE  : "
+    f"{ridge_metrics['mae']:.3f} mmol/l"
+)
+
+print(
+    f"RMSE : "
+    f"{ridge_metrics['rmse']:.3f} mmol/l"
+)
+
+print(
+    f"Bias : "
+    f"{ridge_metrics['bias']:+.3f} mmol/l"
 )
 
 
 # ============================================================
-# IMPROVEMENT
+# IMPROVEMENTS
 # ============================================================
 
 improvement_vs_timesfm = (
     1
-    - v6_metrics["mae"]
+    - ridge_metrics["mae"]
     / timesfm_metrics["mae"]
 ) * 100
 
 improvement_vs_bias = (
     1
-    - v6_metrics["mae"]
+    - ridge_metrics["mae"]
     / bias_metrics["mae"]
 ) * 100
 
 
 print()
-print("IMPROVEMENT")
-print("-----------")
+print(
+    "IMPROVEMENT"
+)
+print(
+    "-----------"
+)
 
 print(
-    f"V6 vs TimesFM: "
+    f"V6.1 vs TimesFM: "
     f"{improvement_vs_timesfm:+.1f}%"
 )
 
 print(
-    f"V6 vs Bias correction: "
+    f"V6.1 vs Bias correction: "
     f"{improvement_vs_bias:+.1f}%"
 )
 
 
 # ============================================================
-# SELECTED ALPHA HISTORY
+# TRAIN FINAL MODEL
 # ============================================================
 
 print()
-print("==========================================================")
-print("SELECTED ALPHA BY OUTER TEST RUN")
-print("==========================================================")
-
-alpha_counts = {}
-
-for item in selected_alpha_history:
-
-    alpha = str(item["selected_alpha"])
-
-    alpha_counts[alpha] = (
-        alpha_counts.get(alpha, 0) + 1
-    )
-
-    print(
-        f"{item['test_run']} -> "
-        f"alpha={item['selected_alpha']}"
-    )
-
-
-# ============================================================
-# TRAIN FINAL V6 MODEL
-# ============================================================
-
-print()
-print("==========================================================")
-print("TRAINING FINAL V6 MODEL")
-print("==========================================================")
-
-# Select final alpha using walk-forward over all currently
-# available data, without using future data in each validation.
-
-final_alpha = select_alpha_inner(df)
-
 print(
-    f"Final selected alpha: {final_alpha}"
+    "=========================================================="
+)
+print(
+    "TRAINING FINAL V6.1 MODEL"
+)
+print(
+    "=========================================================="
 )
 
-final_model = create_model(final_alpha)
+final_model = create_model()
 
-X_all = make_feature_matrix(df)
-y_all = df[TARGET_COLUMN].to_numpy()
+X_all = make_feature_matrix(
+    df
+)
+
+y_all = (
+    df[TARGET_COLUMN]
+    .to_numpy()
+)
 
 final_model.fit(
     X_all,
-    y_all,
+    y_all
 )
 
 
@@ -854,58 +884,86 @@ final_model.fit(
 # ============================================================
 
 model_package = {
-    "model": final_model,
-    "model_name": "ridge_v6_nested_alpha",
-    "alpha": final_alpha,
-    "alpha_candidates": ALPHA_VALUES,
-    "feature_columns": BASE_FEATURE_COLUMNS,
-    "horizons": HORIZONS,
-    "target": TARGET_COLUMN,
-    "dataset_rows": int(len(df)),
-    "forecast_runs": int(len(run_times)),
+
+    "model":
+        final_model,
+
+    "model_name":
+        MODEL_NAME,
+
+    "alpha":
+        RIDGE_ALPHA,
+
+    "feature_columns":
+        BASE_FEATURE_COLUMNS,
+
+    "horizons":
+        HORIZONS,
+
+    "target":
+        TARGET_COLUMN,
+
+    "dataset_rows":
+        int(len(df)),
+
+    "forecast_runs":
+        int(len(run_times)),
 }
+
 
 joblib.dump(
     model_package,
-    MODEL_FILE,
+    MODEL_FILE
 )
 
 print()
 print(
-    f"Final V6 model saved to {MODEL_FILE}"
+    f"Final V6.1 model saved to "
+    f"{MODEL_FILE}"
 )
 
 
 # ============================================================
-# SAVE METRICS JSON
+# SAVE METRICS
 # ============================================================
 
 metrics_output = {
-    "model_name": "ridge_v6_nested_alpha",
-    "dataset_rows": int(len(df)),
-    "forecast_runs": int(len(run_times)),
-    "test_samples": int(len(selected_actuals)),
-    "test_forecast_runs": int(len(outer_results)),
 
-    "timesfm": timesfm_metrics,
+    "model_name":
+        MODEL_NAME,
 
-    "bias_correction": bias_metrics,
+    "alpha":
+        RIDGE_ALPHA,
 
-    "v6_nested": v6_metrics,
+    "dataset_rows":
+        int(len(df)),
 
-    "best_diagnostic_alpha": float(
-        best_diagnostic_alpha
-    ),
+    "forecast_runs":
+        int(len(run_times)),
 
-    "best_diagnostic_alpha_metrics":
-        best_diagnostic_metrics,
+    "test_samples":
+        int(len(ridge_actuals)),
 
-    "final_alpha": float(final_alpha),
+    "test_forecast_runs":
+        int(len(outer_results)),
 
-    "alpha_results": alpha_metrics,
+    "timesfm":
+        timesfm_metrics,
 
-    "selected_alpha_history":
-        selected_alpha_history,
+    "bias_correction":
+        bias_metrics,
+
+    "v6_1":
+        ridge_metrics,
+
+    "improvement_vs_timesfm_percent":
+        float(improvement_vs_timesfm),
+
+    "improvement_vs_bias_percent":
+        float(improvement_vs_bias),
+
+    "horizon_results":
+        horizon_results,
 
     "outer_results":
         outer_results,
@@ -915,19 +973,20 @@ metrics_output = {
 with open(
     METRICS_FILE,
     "w",
-    encoding="utf-8",
+    encoding="utf-8"
 ) as f:
 
     json.dump(
         metrics_output,
         f,
         indent=2,
-        ensure_ascii=False,
+        ensure_ascii=False
     )
 
 
 print(
-    f"Metrics saved to {METRICS_FILE}"
+    f"Metrics saved to "
+    f"{METRICS_FILE}"
 )
 
 
@@ -939,61 +998,77 @@ if SUPABASE_API_KEY:
 
     git_sha = os.getenv(
         "GITHUB_SHA",
-        None,
+        None
     )
 
     experiment_payload = {
-        "model_name": "ridge_v6_nested_alpha",
-        "git_sha": git_sha,
 
-        "dataset_rows": int(len(df)),
-        "test_samples": int(len(selected_actuals)),
-        "test_forecast_runs": int(len(outer_results)),
+        "model_name":
+            MODEL_NAME,
+
+        "git_sha":
+            git_sha,
+
+        "dataset_rows":
+            int(len(df)),
+
+        "test_samples":
+            int(len(ridge_actuals)),
+
+        "test_forecast_runs":
+            int(len(outer_results)),
 
         "timesfm_mae":
-            safe_float(timesfm_metrics["mae"]),
+            safe_float(
+                timesfm_metrics["mae"]
+            ),
 
         "timesfm_rmse":
-            safe_float(timesfm_metrics["rmse"]),
+            safe_float(
+                timesfm_metrics["rmse"]
+            ),
 
         "timesfm_bias":
-            safe_float(timesfm_metrics["bias"]),
+            safe_float(
+                timesfm_metrics["bias"]
+            ),
 
         "bias_mae":
-            safe_float(bias_metrics["mae"]),
+            safe_float(
+                bias_metrics["mae"]
+            ),
 
         "bias_rmse":
-            safe_float(bias_metrics["rmse"]),
+            safe_float(
+                bias_metrics["rmse"]
+            ),
 
         "bias_bias":
-            safe_float(bias_metrics["bias"]),
+            safe_float(
+                bias_metrics["bias"]
+            ),
 
         "ridge_mae":
-            safe_float(v6_metrics["mae"]),
+            safe_float(
+                ridge_metrics["mae"]
+            ),
 
         "ridge_rmse":
-            safe_float(v6_metrics["rmse"]),
+            safe_float(
+                ridge_metrics["rmse"]
+            ),
 
         "ridge_bias":
-            safe_float(v6_metrics["bias"]),
+            safe_float(
+                ridge_metrics["bias"]
+            ),
 
         "horizon_results": {
-            "model": "ridge_v6_nested_alpha",
+            "alpha":
+                RIDGE_ALPHA,
 
-            "final_alpha":
-                float(final_alpha),
-
-            "best_diagnostic_alpha":
-                float(best_diagnostic_alpha),
-
-            "alpha_results":
-                alpha_metrics,
-
-            "selected_alpha_counts":
-                alpha_counts,
-
-            "selected_alpha_history":
-                selected_alpha_history,
+            "horizon_metrics":
+                horizon_results,
 
             "outer_results":
                 outer_results,
@@ -1001,28 +1076,40 @@ if SUPABASE_API_KEY:
     }
 
     headers = {
-        "apikey": SUPABASE_API_KEY,
+
+        "apikey":
+            SUPABASE_API_KEY,
+
         "Authorization":
             f"Bearer {SUPABASE_API_KEY}",
+
         "Content-Type":
             "application/json",
+
         "Prefer":
             "return=minimal",
     }
 
     response = requests.post(
+
         f"{SUPABASE_URL}/rest/v1/"
         f"{EXPERIMENTS_TABLE}",
+
         headers=headers,
+
         json=experiment_payload,
+
         timeout=30,
     )
 
-    if response.status_code not in [200, 201]:
+    if response.status_code not in [
+        200,
+        201
+    ]:
 
         print(
-            "WARNING: Could not save experiment "
-            "to Supabase."
+            "WARNING: Could not save "
+            "experiment to Supabase."
         )
 
         print(
@@ -1042,8 +1129,9 @@ if SUPABASE_API_KEY:
 else:
 
     print(
-        "WARNING: SUPABASE_API_KEY is not available. "
-        "Experiment was not saved to Supabase."
+        "WARNING: SUPABASE_API_KEY is not "
+        "available. Experiment was not "
+        "saved to Supabase."
     )
 
 
@@ -1052,6 +1140,12 @@ else:
 # ============================================================
 
 print()
-print("==========================================================")
-print("Personalization V6 completed successfully.")
-print("==========================================================")
+print(
+    "=========================================================="
+)
+print(
+    "Personalization V6.1 completed successfully."
+)
+print(
+    "=========================================================="
+)
