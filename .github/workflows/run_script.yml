@@ -34,11 +34,6 @@ jobs:
           SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
         run: python evaluate_forecasts.py
 
-      - name: Analyze forecast accuracy
-        env:
-          SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
-        run: python analyze_forecast_accuracy.py
-
       - name: Build personalization dataset
         env:
           SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
